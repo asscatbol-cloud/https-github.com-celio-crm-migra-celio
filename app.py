@@ -4,6 +4,8 @@ import database as db
 import io
 import re
 import os
+import base64
+import streamlit.components.v1 as components
 
 # Configuração da Página
 st.set_page_config(
@@ -12,6 +14,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Declarar componente customizado de colar imagem (Ctrl+V)
+PASTE_COMPONENT_PATH = os.path.join(os.path.dirname(__file__), "paste_component")
+image_paste_component = components.declare_component("image_paste_box", path=PASTE_COMPONENT_PATH)
 
 # Estilização CSS Customizada
 st.markdown("""
@@ -45,13 +51,6 @@ st.markdown("""
         border-radius: 12px;
         font-weight: bold;
         display: inline-block;
-    }
-    .proposal-box {
-        background-color: #eef6ff;
-        border-left: 5px solid #0066cc;
-        padding: 1rem;
-        border-radius: 6px;
-        margin-bottom: 1rem;
     }
     .stButton>button {
         border-radius: 6px;
@@ -196,7 +195,7 @@ with col_h2:
 
 st.divider()
 
-# === NOVO CARD: PREPARAÇÃO DA PROPOSTA (PRÉ-ATENDIMENTO) ===
+# === CARD: PREPARAÇÃO DA PROPOSTA (PRÉ-ATENDIMENTO) ===
 with st.expander("📋 **Informações da Proposta (Pré-Atendimento)**", expanded=True):
     col_p1, col_p2 = st.columns([1, 1])
     
@@ -205,7 +204,7 @@ with st.expander("📋 **Informações da Proposta (Pré-Atendimento)**", expand
         prop_notes_input = st.text_area(
             "Anote valores, descontos, planos oferecidos ou condições negociadas antes de falar com o cliente:",
             value=proposal_notes_saved,
-            height=120,
+            height=140,
             key=f"prop_notes_{current_row_idx}",
             placeholder="Ex: Oferta de Migração 100GB por R$ 99/mês + aparelho Galaxy A17 grátis."
         )
@@ -216,8 +215,25 @@ with st.expander("📋 **Informações da Proposta (Pré-Atendimento)**", expand
 
     with col_p2:
         st.markdown("#### 🖼️ Imagem / Print da Proposta")
+        
+        # Opção 1: Colar direto via CTRL + V
+        st.write("**Opção 1: Colar Print da Tela (Ctrl + V)**")
+        pasted_b64 = image_paste_component(key=f"paste_box_{current_row_idx}")
+        
+        if pasted_b64 and isinstance(pasted_b64, str) and pasted_b64.startswith("data:image"):
+            try:
+                header, b64_data = pasted_b64.split(",", 1)
+                img_bytes = base64.b64decode(b64_data)
+                db.save_proposal(current_row_idx, prop_notes_input, img_bytes, "print_colado.png")
+                st.toast("✅ Print colado com sucesso via Ctrl + V!", icon="📸")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao processar imagem colada: {e}")
+
+        # Opção 2: Anexo de arquivo tradicional
+        st.write("**Opção 2: Anexar Arquivo de Imagem**")
         uploaded_file = st.file_uploader(
-            "Anexe ou cole a imagem/print da proposta:",
+            "Selecione um arquivo de imagem:",
             type=["png", "jpg", "jpeg", "webp"],
             key=f"prop_img_uploader_{current_row_idx}"
         )
@@ -228,12 +244,11 @@ with st.expander("📋 **Informações da Proposta (Pré-Atendimento)**", expand
             st.toast("✅ Imagem da proposta anexada com sucesso!", icon="🎉")
             st.rerun()
 
-        # Exibir a imagem salva se existir
-        if proposal_img_path and os.path.exists(proposal_img_path):
-            st.info(f"📅 **Data da Imagem:** `{proposal_img_date}`")
-            st.image(proposal_img_path, caption=f"Proposta enviada em {proposal_img_date}", use_container_width=True)
-        else:
-            st.caption("Nenhuma imagem de proposta anexada até o momento.")
+    # Exibir a imagem salva se existir para o cliente
+    if proposal_img_path and os.path.exists(proposal_img_path):
+        st.divider()
+        st.info(f"📅 **Data da Imagem Salva:** `{proposal_img_date}`")
+        st.image(proposal_img_path, caption=f"Print da Proposta enviado em {proposal_img_date}", use_container_width=True)
 
 st.divider()
 
