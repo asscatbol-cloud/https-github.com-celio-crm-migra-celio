@@ -2,7 +2,9 @@ import sqlite3
 import pandas as pd
 import os
 import io
+import streamlit as st
 from datetime import datetime
+from PIL import Image
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "MIGRA 1 CELIO OUT.xlsx")
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "interactions.db")
@@ -57,8 +59,22 @@ def init_db():
     conn.commit()
     conn.close()
 
+def compress_image_bytes(image_bytes, max_dim=1200, quality=82):
+    """Comprime e redimensiona a imagem enviada para garantir carregamento instantâneo."""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            out_buf = io.BytesIO()
+            img.save(out_buf, format='JPEG', quality=quality, optimize=True)
+            return out_buf.getvalue(), ".jpg"
+    except Exception:
+        return image_bytes, ".png"
+
+@st.cache_data(ttl=600, show_spinner=False)
 def load_dataset():
-    """Carrega o Excel original e mescla com o banco de dados de interações e propostas."""
+    """Carrega o Excel original e mescla com o banco de dados de interações (com Caching inteligente)."""
     init_db()
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(f"Arquivo não encontrado em: {DATA_PATH}")
@@ -111,7 +127,7 @@ def load_dataset():
     return merged
 
 def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
-    """Salva notas e adiciona uma imagem de proposta ao histórico do cliente."""
+    """Salva notas e adiciona uma imagem de proposta otimizada ao histórico do cliente."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -121,14 +137,14 @@ def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
     current_img_path = ""
     current_img_date = ""
 
-    # Se uma nova imagem foi enviada
+    # Se uma nova imagem foi enviada, comprimir antes de salvar
     if image_bytes is not None and filename:
-        ext = os.path.splitext(filename)[1] or ".png"
+        compressed_bytes, ext = compress_image_bytes(image_bytes)
         saved_filename = f"proposal_{row_id}_{now_dt.strftime('%Y%m%d_%H%M%S')}{ext}"
         target_path = os.path.join(PROPOSALS_DIR, saved_filename)
         
         with open(target_path, "wb") as f:
-            f.write(image_bytes)
+            f.write(compressed_bytes)
             
         current_img_path = target_path
         current_img_date = now_str
@@ -152,9 +168,13 @@ def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
 
     conn.commit()
     conn.close()
+    
+    # Limpar cache do Streamlit para atualizar a UI instantaneamente
+    st.cache_data.clear()
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_proposal_images(row_id):
-    """Retorna todas as imagens da proposta associadas a um cliente (ordenadas da mais recente para a mais antiga)."""
+    """Retorna todas as imagens da proposta associadas a um cliente (com cache ultrarrápido)."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -196,8 +216,8 @@ def import_new_dataset(file_bytes, filename):
     else:
         df = pd.read_excel(io.BytesIO(file_bytes))
         
-    # Salvar na localização padrão do projeto
     df.to_excel(DATA_PATH, index=False)
+    st.cache_data.clear()
     return len(df)
 
 def save_interaction(row_id, cnpj, cliente, status, atendeu, observacao, consultor="Consultor"):
@@ -220,6 +240,7 @@ def save_interaction(row_id, cnpj, cliente, status, atendeu, observacao, consult
 
     conn.commit()
     conn.close()
+    st.cache_data.clear()
 
 def export_results():
     """Gera um DataFrame pronto para exportação em Excel ou CSV."""
