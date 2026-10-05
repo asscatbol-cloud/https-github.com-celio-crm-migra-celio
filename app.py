@@ -23,15 +23,15 @@ image_paste_component = components.declare_component("image_paste_box", path=PAS
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2rem;
+        font-size: 1.8rem;
         color: #0056b3;
         font-weight: 700;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.2rem;
     }
     .badge-gpon {
         background-color: #28a745;
         color: white;
-        padding: 4px 10px;
+        padding: 3px 10px;
         border-radius: 12px;
         font-weight: bold;
         display: inline-block;
@@ -39,7 +39,7 @@ st.markdown("""
     .badge-no-gpon {
         background-color: #dc3545;
         color: white;
-        padding: 4px 10px;
+        padding: 3px 10px;
         border-radius: 12px;
         font-weight: bold;
         display: inline-block;
@@ -47,10 +47,18 @@ st.markdown("""
     .badge-device {
         background-color: #17a2b8;
         color: white;
-        padding: 4px 10px;
+        padding: 3px 10px;
         border-radius: 12px;
         font-weight: bold;
         display: inline-block;
+    }
+    .card-box {
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
     .stButton>button {
         border-radius: 6px;
@@ -85,7 +93,7 @@ def on_selectbox_change():
         st.session_state.current_index = st.session_state.select_client_widget
 
 # Sidebar
-st.sidebar.image("https://img.icons8.com/color/96/000000/headset.png", width=64)
+st.sidebar.image("https://img.icons8.com/color/96/000000/headset.png", width=56)
 st.sidebar.title(" Painel do Consultor")
 
 consultor_input = st.sidebar.text_input("Seu Nome / ID:", value=st.session_state.consultor)
@@ -140,7 +148,7 @@ st.sidebar.divider()
 # RECURSO: UPLOAD DE NOVAS PLANILHAS NA SIDEBAR
 st.sidebar.subheader("📥 Importar Nova Planilha")
 uploaded_sheet = st.sidebar.file_uploader(
-    "Subir novo arquivo Excel (.xlsx) ou CSV:",
+    "Subir arquivo Excel (.xlsx) ou CSV:",
     type=["xlsx", "xls", "csv"],
     key="new_dataset_uploader"
 )
@@ -168,11 +176,9 @@ st.sidebar.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-# === CORPO PRINCIPAL DO APP (1 CLIENTE POR VEZ) ===
+# === CORPO PRINCIPAL DO APP ===
 
 current_row_idx = st.session_state.current_index
-
-# Extrair dicionário puro do cliente atual
 row_dict = df.iloc[current_row_idx].to_dict()
 
 cliente_nome = get_str(row_dict, "CLIENTE")
@@ -195,13 +201,12 @@ recomendacao_val = get_str(row_dict, "RECOMENDACAO_APARELHO_LINHA", "Sem recomen
 status_atual = get_str(row_dict, "STATUS_CHAMADA", "Pendente")
 saved_atendeu = get_str(row_dict, "ATENDEU", "Não Registrado")
 saved_obs = get_str(row_dict, "INTERACAO_CONSULTOR", "")
-
 proposal_notes_saved = get_str(row_dict, "PROPOSAL_NOTES", "")
 
-# Header da Página
+# Header do Cliente
 col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
-    st.markdown(f"<div class='main-header'>📞 Ficha do Cliente #{current_row_idx + 1} de {total_clientes}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='main-header'>📞 Cliente #{current_row_idx + 1} de {total_clientes} - {cliente_nome}</div>", unsafe_allow_html=True)
 with col_h2:
     if status_atual == "Pendente":
         st.warning(f"Status: **{status_atual}**")
@@ -210,140 +215,115 @@ with col_h2:
 
 st.divider()
 
-# === SEÇÃO 1: IMAGENS DA PROPOSTA (EXIBIÇÃO IMEDIATA E HISTÓRICO) ===
-images_list = db.get_proposal_images(current_row_idx)
-
-if images_list:
-    st.markdown("### 📸 Imagem da Proposta do Cliente")
-    newest_img = images_list[0]
-    
-    col_img_header1, col_img_header2 = st.columns([2, 1])
-    with col_img_header1:
-        st.info(f"📅 **Data e Hora da Imagem Mais Recente:** `{newest_img['date']}`")
-    with col_img_header2:
-        st.caption(f"Total de imagens anexadas: {len(images_list)}")
-        
-    st.image(newest_img['path'], caption=f"Print da Proposta enviado em {newest_img['date']}", use_container_width=True)
-    
-    # Se houver mais de 1 imagem, exibir o histórico completo
-    if len(images_list) > 1:
-        with st.expander(f"📜 **Ver Imagens Anteriores da Proposta ({len(images_list) - 1} anteriores)**"):
-            for idx_img, img_item in enumerate(images_list[1:], start=1):
-                st.markdown(f"**Imagem #{len(images_list) - idx_img} - Enviada em: `{img_item['date']}`**")
-                st.image(img_item['path'], use_container_width=True)
-                st.divider()
-    st.divider()
-
-# === CARD: PREPARAÇÃO DA PROPOSTA (ADICIONAR/ANEXAR IMAGENS E NOTAS) ===
-with st.expander("📋 **Adicionar Novas Notas ou Anexar/Colar Proposta (Pré-Atendimento)**", expanded=not bool(images_list)):
-    col_p1, col_p2 = st.columns([1, 1])
-    
-    with col_p1:
-        st.markdown("#### 📄 Detalhes e Condições da Proposta")
-        prop_notes_input = st.text_area(
-            "Anote valores, descontos, planos oferecidos ou condições negociadas:",
-            value=proposal_notes_saved,
-            height=140,
-            key=f"prop_notes_{current_row_idx}",
-            placeholder="Ex: Oferta de Migração 100GB por R$ 99/mês + aparelho Galaxy A17 grátis."
-        )
-        if st.button("💾 Salvar Notas da Proposta", key=f"btn_save_prop_notes_{current_row_idx}"):
-            db.save_proposal(current_row_idx, prop_notes_input, cnpj=cnpj_val)
-            st.toast("✅ Notas da proposta salvas!", icon="💾")
-            st.rerun()
-
-    with col_p2:
-        st.markdown("#### 🖼️ Colar ou Anexar Nova Imagem")
-        
-        # Opção 1: Colar direto via CTRL + V
-        st.write("**Opção 1: Colar Print da Tela (Ctrl + V)**")
-        pasted_b64 = image_paste_component(key=f"paste_box_{current_row_idx}")
-        
-        if pasted_b64 and isinstance(pasted_b64, str) and pasted_b64.startswith("data:image"):
-            try:
-                header, b64_data = pasted_b64.split(",", 1)
-                img_bytes = base64.b64decode(b64_data)
-                db.save_proposal(current_row_idx, prop_notes_input, img_bytes, "print_colado.png", cnpj=cnpj_val)
-                st.toast("✅ Print colado com sucesso via Ctrl + V!", icon="📸")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao processar imagem colada: {e}")
-
-        # Opção 2: Anexo de arquivo tradicional
-        st.write("**Opção 2: Anexar Arquivo de Imagem**")
-        uploaded_file = st.file_uploader(
-            "Selecione um arquivo de imagem:",
-            type=["png", "jpg", "jpeg", "webp"],
-            key=f"prop_img_uploader_{current_row_idx}"
-        )
-        
-        if uploaded_file is not None:
-            image_bytes = uploaded_file.read()
-            db.save_proposal(current_row_idx, prop_notes_input, image_bytes, uploaded_file.name, cnpj=cnpj_val)
-            st.toast("✅ Imagem da proposta anexada com sucesso!", icon="🎉")
-            st.rerun()
-
-st.divider()
-
-# Dados em Colunas / Cards do Cliente
+# === BLOCO 1: DADOS DO CLIENTE (EMPRESA, CONTATO, GPON, APARELHOS) ===
 col_info1, col_info2 = st.columns([1, 1])
 
 with col_info1:
-    st.markdown("###  Empresa & Contato")
-    st.markdown(f"**Empresa:** {cliente_nome}")
+    st.markdown("####  Empresa & Contato")
     st.markdown(f"**CNPJ:** `{cnpj_val}`")
     st.markdown(f"**Contato:** {contato_nome}")
     
     # Tratamento de Telefone e WhatsApp
     tel_clean = re.sub(r'\D', '', tel_raw.replace('.0', ''))
-    
     st.markdown(f"**Telefone:** `{tel_raw if tel_raw else 'N/I'}`")
     if tel_clean:
         tel_wa = tel_clean if tel_clean.startswith("55") else "55" + tel_clean
         st.markdown(f"[📱 **Iniciar conversa no WhatsApp**](https://wa.me/{tel_wa})", unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("### 🗺️ Localização & Plano")
-    
-    mun_uf = f"{municipio_val}/{uf_val}" if (municipio_val != "N/I" or uf_val != "N/I") else "N/I"
-    st.markdown(f"**Município/UF:** {mun_uf}")
-    
-    end_full = f"{endereco_val}, Nº {numero_val} (CEP: {cep_val})" if endereco_val != "N/I" else "N/I"
-    st.markdown(f"**Endereço:** {end_full}")
-    
-    st.markdown(f"**Plano Atual:** `{plano_val}`")
-    st.markdown(f"**Qtde de Linhas:** {linhas_val}")
+    st.markdown(f"**Endereço:** {endereco_val}, Nº {numero_val} - {municipio_val}/{uf_val}")
+    st.markdown(f"**Plano Atual:** `{plano_val}` ({linhas_val} linhas)")
 
 with col_info2:
-    st.markdown("### ⚡ Viabilidade de Rede & Cobertura")
+    st.markdown("#### ⚡ Viabilidade de Rede & Aparelhos")
     
     tem_gpon = "GPON" in tipo_rede_val or cobertura_val.lower() in ["sim", "1"]
-    
     if tem_gpon:
         st.markdown(f"**Rede:** <span class='badge-gpon'>{tipo_rede_val} (Com Viabilidade)</span>", unsafe_allow_html=True)
     else:
         st.markdown(f"**Rede:** <span class='badge-no-gpon'>{tipo_rede_val if tipo_rede_val != 'N/I' else 'SEM GPON'} (Sem Cobertura)</span>", unsafe_allow_html=True)
 
-    st.markdown(f"**Cobertura Banda Larga:** {cobertura_val}")
-    st.markdown(f"**Está na Mancha:** {'Sim (1)' if mancha_val == '1' else 'Não (0)'}")
-
-    st.markdown("---")
-    st.markdown("###  Equipamentos & Aparelhos")
-    
     aparelho_trafego = f"{marca_val} {modelo_val}".strip()
     st.markdown(f"**Aparelho em Tráfego:** {aparelho_trafego if aparelho_trafego else 'Não informado'}")
     st.markdown(f"**Recomendação de Aparelho:** <span class='badge-device'>{recomendacao_val}</span>", unsafe_allow_html=True)
 
 st.divider()
 
-# === SEÇÃO DE REGISTRO DA INTERAÇÃO DA CHAMADA ===
-st.markdown("## 📝 Registro do Atendimento (Obrigatório)")
+# === BLOCO 2: PAINEL DA PROPOSTA (LADO A LADO: NOTAS/COLAR DA ESQUERDA vs PREVIEW DA IMAGEM NA DIREITA) ===
+st.markdown("### 📋 Painel da Proposta (Pré-Atendimento)")
+
+col_prop_left, col_prop_right = st.columns([1, 1])
+
+with col_prop_left:
+    st.markdown("##### 📄 Notas e Condições da Proposta")
+    prop_notes_input = st.text_area(
+        "Anote propostas, valores ou condições negociadas:",
+        value=proposal_notes_saved,
+        height=100,
+        key=f"prop_notes_{current_row_idx}",
+        placeholder="Ex: Oferta de Migração 100GB por R$ 99/mês + aparelho Galaxy A17 grátis."
+    )
+    if st.button("💾 Salvar Notas da Proposta", key=f"btn_save_prop_notes_{current_row_idx}"):
+        db.save_proposal(current_row_idx, prop_notes_input, cnpj=cnpj_val)
+        st.toast("✅ Notas da proposta salvas!", icon="💾")
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown("##### 📸 Anexar / Colar Print da Proposta")
+    
+    # Colar via Ctrl+V
+    st.caption("1. Clique na caixa abaixo e aperte **CTRL + V** (PrintScreen / Win+Shift+S):")
+    pasted_b64 = image_paste_component(key=f"paste_box_{current_row_idx}")
+    
+    if pasted_b64 and isinstance(pasted_b64, str) and pasted_b64.startswith("data:image"):
+        try:
+            header, b64_data = pasted_b64.split(",", 1)
+            img_bytes = base64.b64decode(b64_data)
+            db.save_proposal(current_row_idx, prop_notes_input, img_bytes, "print_colado.png", cnpj=cnpj_val)
+            st.toast("✅ Print colado com sucesso!", icon="📸")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao colar imagem: {e}")
+
+    # Anexo de arquivo
+    with st.expander("Ou selecione um arquivo do computador"):
+        uploaded_file = st.file_uploader(
+            "Escolha o arquivo de imagem:",
+            type=["png", "jpg", "jpeg", "webp"],
+            key=f"prop_img_uploader_{current_row_idx}"
+        )
+        if uploaded_file is not None:
+            image_bytes = uploaded_file.read()
+            db.save_proposal(current_row_idx, prop_notes_input, image_bytes, uploaded_file.name, cnpj=cnpj_val)
+            st.toast("✅ Imagem da proposta enviada!", icon="🎉")
+            st.rerun()
+
+with col_prop_right:
+    st.markdown("##### 🖼️ Visualização da Proposta (Imagem)")
+    images_list = db.get_proposal_images(current_row_idx)
+    
+    if images_list:
+        newest_img = images_list[0]
+        st.success(f"📅 **Enviado em:** `{newest_img['date']}`")
+        st.image(newest_img['path'], use_container_width=True)
+        
+        # Histórico de imagens anteriores (se houver mais de uma)
+        if len(images_list) > 1:
+            with st.expander(f"📜 Histórico ({len(images_list) - 1} imagens anteriores)"):
+                for idx_img, img_item in enumerate(images_list[1:], start=1):
+                    st.caption(f"**Enviado em: {img_item['date']}**")
+                    st.image(img_item['path'], use_container_width=True)
+                    st.divider()
+    else:
+        st.info("ℹ️ Nenhuma imagem de proposta enviada ainda. Tire um print (`Win + Shift + S`) e cole ao lado!")
+
+st.divider()
+
+# === BLOCO 3: REGISTRO DA CHAMADA E ATENDIMENTO ===
+st.markdown("### 📝 Registro do Atendimento (Obrigatório)")
 
 # Botões de Resposta Rápida
-st.write("**Passo 1: Resultado da Chamada**")
 col_b1, col_b2, col_b3, col_b4 = st.columns(4)
 
-# Estado local dos botões
 if f"status_choice_{current_row_idx}" not in st.session_state:
     st.session_state[f"status_choice_{current_row_idx}"] = status_atual if status_atual != "Pendente" else "Atendeu"
 
@@ -374,20 +354,17 @@ with col_b4:
         st.session_state[f"status_choice_{current_row_idx}"] = "Sem Interesse"
         st.rerun()
 
-# Exibir seleção atual
-st.info(f"Seleção Atual: Chamada **{st.session_state[f'atendeu_choice_{current_row_idx}']}** | Status: **{st.session_state[f'status_choice_{current_row_idx}']}**")
+st.caption(f"Seleção: Chamada **{st.session_state[f'atendeu_choice_{current_row_idx}']}** | Status: **{st.session_state[f'status_choice_{current_row_idx}']}**")
 
 # Campo de texto obrigatório
-st.write("**Passo 2: Descreva a Interação com o Cliente (Obrigatório para avançar)**")
 obs_input = st.text_area(
-    "Digite os detalhes da conversa, propostas enviadas ou motivo da não resposta:",
+    "Descreva o resultado da ligação / observações obrigatórias:",
     value=saved_obs,
-    height=100,
+    height=90,
     key=f"obs_input_{current_row_idx}",
     placeholder="Ex: Cliente interessado no plano 100GB. Solicitou proposta por WhatsApp para falar com a diretoria na quinta-feira."
 )
 
-# Validação do Botão de Avanço
 obs_valida = bool(obs_input and obs_input.strip())
 
 col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
@@ -401,11 +378,10 @@ with col_nav1:
 
 with col_nav2:
     if not obs_valida:
-        st.error("⚠️ Preencha o campo de observação/interação para salvar e liberar o botão de Próximo Cliente.")
+        st.error("⚠️ Preencha a observação para liberar o avanço.")
         st.button(" Gravar & Avançar para Próximo", disabled=True, use_container_width=True)
     else:
         if st.button(" Gravar & Avançar para Próximo Cliente", type="primary", use_container_width=True):
-            # Salvar no banco de dados SQLite
             db.save_interaction(
                 row_id=current_row_idx,
                 cnpj=cnpj_val,
@@ -417,7 +393,6 @@ with col_nav2:
             )
             st.toast("✅ Atendimento registrado com sucesso!", icon="🎉")
             
-            # Avançar para o próximo cliente
             curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
             if curr_pos < len(lista_indices) - 1:
                 st.session_state.current_index = lista_indices[curr_pos + 1]
