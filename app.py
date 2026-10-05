@@ -137,6 +137,23 @@ st.sidebar.selectbox(
 
 st.sidebar.divider()
 
+# RECURSO: UPLOAD DE NOVAS PLANILHAS NA SIDEBAR
+st.sidebar.subheader("📥 Importar Nova Planilha")
+uploaded_sheet = st.sidebar.file_uploader(
+    "Subir novo arquivo Excel (.xlsx) ou CSV:",
+    type=["xlsx", "xls", "csv"],
+    key="new_dataset_uploader"
+)
+if uploaded_sheet is not None:
+    if st.sidebar.button("🔄 Atualizar Base de Dados", type="primary", use_container_width=True):
+        file_bytes = uploaded_sheet.read()
+        num_rows = db.import_new_dataset(file_bytes, uploaded_sheet.name)
+        st.sidebar.success(f"✅ Planilha carregada! {num_rows} clientes importados.")
+        st.session_state.current_index = 0
+        st.rerun()
+
+st.sidebar.divider()
+
 # Exportar Relatório
 st.sidebar.subheader("📊 Exportar Relatório")
 buffer = io.BytesIO()
@@ -180,8 +197,6 @@ saved_atendeu = get_str(row_dict, "ATENDEU", "Não Registrado")
 saved_obs = get_str(row_dict, "INTERACAO_CONSULTOR", "")
 
 proposal_notes_saved = get_str(row_dict, "PROPOSAL_NOTES", "")
-proposal_img_path = get_str(row_dict, "PROPOSAL_IMAGE_PATH", "")
-proposal_img_date = get_str(row_dict, "PROPOSAL_IMAGE_DATE", "")
 
 # Header da Página
 col_h1, col_h2 = st.columns([3, 1])
@@ -195,26 +210,50 @@ with col_h2:
 
 st.divider()
 
-# === CARD: PREPARAÇÃO DA PROPOSTA (PRÉ-ATENDIMENTO) ===
-with st.expander("📋 **Informações da Proposta (Pré-Atendimento)**", expanded=True):
+# === SEÇÃO 1: IMAGENS DA PROPOSTA (EXIBIÇÃO IMEDIATA E HISTÓRICO) ===
+images_list = db.get_proposal_images(current_row_idx)
+
+if images_list:
+    st.markdown("### 📸 Imagem da Proposta do Cliente")
+    newest_img = images_list[0]
+    
+    col_img_header1, col_img_header2 = st.columns([2, 1])
+    with col_img_header1:
+        st.info(f"📅 **Data e Hora da Imagem Mais Recente:** `{newest_img['date']}`")
+    with col_img_header2:
+        st.caption(f"Total de imagens anexadas: {len(images_list)}")
+        
+    st.image(newest_img['path'], caption=f"Print da Proposta enviado em {newest_img['date']}", use_container_width=True)
+    
+    # Se houver mais de 1 imagem, exibir o histórico completo
+    if len(images_list) > 1:
+        with st.expander(f"📜 **Ver Imagens Anteriores da Proposta ({len(images_list) - 1} anteriores)**"):
+            for idx_img, img_item in enumerate(images_list[1:], start=1):
+                st.markdown(f"**Imagem #{len(images_list) - idx_img} - Enviada em: `{img_item['date']}`**")
+                st.image(img_item['path'], use_container_width=True)
+                st.divider()
+    st.divider()
+
+# === CARD: PREPARAÇÃO DA PROPOSTA (ADICIONAR/ANEXAR IMAGENS E NOTAS) ===
+with st.expander("📋 **Adicionar Novas Notas ou Anexar/Colar Proposta (Pré-Atendimento)**", expanded=not bool(images_list)):
     col_p1, col_p2 = st.columns([1, 1])
     
     with col_p1:
         st.markdown("#### 📄 Detalhes e Condições da Proposta")
         prop_notes_input = st.text_area(
-            "Anote valores, descontos, planos oferecidos ou condições negociadas antes de falar com o cliente:",
+            "Anote valores, descontos, planos oferecidos ou condições negociadas:",
             value=proposal_notes_saved,
             height=140,
             key=f"prop_notes_{current_row_idx}",
             placeholder="Ex: Oferta de Migração 100GB por R$ 99/mês + aparelho Galaxy A17 grátis."
         )
         if st.button("💾 Salvar Notas da Proposta", key=f"btn_save_prop_notes_{current_row_idx}"):
-            db.save_proposal(current_row_idx, prop_notes_input)
+            db.save_proposal(current_row_idx, prop_notes_input, cnpj=cnpj_val)
             st.toast("✅ Notas da proposta salvas!", icon="💾")
             st.rerun()
 
     with col_p2:
-        st.markdown("#### 🖼️ Imagem / Print da Proposta")
+        st.markdown("#### 🖼️ Colar ou Anexar Nova Imagem")
         
         # Opção 1: Colar direto via CTRL + V
         st.write("**Opção 1: Colar Print da Tela (Ctrl + V)**")
@@ -224,7 +263,7 @@ with st.expander("📋 **Informações da Proposta (Pré-Atendimento)**", expand
             try:
                 header, b64_data = pasted_b64.split(",", 1)
                 img_bytes = base64.b64decode(b64_data)
-                db.save_proposal(current_row_idx, prop_notes_input, img_bytes, "print_colado.png")
+                db.save_proposal(current_row_idx, prop_notes_input, img_bytes, "print_colado.png", cnpj=cnpj_val)
                 st.toast("✅ Print colado com sucesso via Ctrl + V!", icon="📸")
                 st.rerun()
             except Exception as e:
@@ -240,15 +279,9 @@ with st.expander("📋 **Informações da Proposta (Pré-Atendimento)**", expand
         
         if uploaded_file is not None:
             image_bytes = uploaded_file.read()
-            db.save_proposal(current_row_idx, prop_notes_input, image_bytes, uploaded_file.name)
+            db.save_proposal(current_row_idx, prop_notes_input, image_bytes, uploaded_file.name, cnpj=cnpj_val)
             st.toast("✅ Imagem da proposta anexada com sucesso!", icon="🎉")
             st.rerun()
-
-    # Exibir a imagem salva se existir para o cliente
-    if proposal_img_path and os.path.exists(proposal_img_path):
-        st.divider()
-        st.info(f"📅 **Data da Imagem Salva:** `{proposal_img_date}`")
-        st.image(proposal_img_path, caption=f"Print da Proposta enviado em {proposal_img_date}", use_container_width=True)
 
 st.divider()
 

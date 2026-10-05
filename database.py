@@ -1,6 +1,7 @@
 import sqlite3
 import pandas as pd
 import os
+import io
 from datetime import datetime
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "MIGRA 1 CELIO OUT.xlsx")
@@ -8,10 +9,12 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "data", "interactions.db")
 PROPOSALS_DIR = os.path.join(os.path.dirname(__file__), "data", "proposals")
 
 def init_db():
-    """Inicializa o banco de dados SQLite para salvar interações e propostas."""
+    """Inicializa o banco de dados SQLite para salvar interações, propostas e histórico de imagens."""
     os.makedirs(PROPOSALS_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    
+    # Tabela principal de interações
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS interactions (
             row_id INTEGER PRIMARY KEY,
@@ -28,7 +31,19 @@ def init_db():
         )
     """)
     
-    # Adicionar colunas se tabela já existia sem elas
+    # Tabela de histórico de imagens por cliente
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proposal_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            row_id INTEGER,
+            cnpj TEXT,
+            image_path TEXT,
+            image_date TEXT,
+            created_at TIMESTAMP
+        )
+    """)
+    
+    # Adicionar colunas se tabela interações já existia sem elas
     for col_def in [
         ("proposal_notes", "TEXT"),
         ("proposal_image_path", "TEXT"),
@@ -95,19 +110,16 @@ def load_dataset():
 
     return merged
 
-def save_proposal(row_id, notes, image_bytes=None, filename=None):
-    """Salva notas e imagem da proposta para determinado cliente."""
+def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
+    """Salva notas e adiciona uma imagem de proposta ao histórico do cliente."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     now_dt = datetime.now()
     now_str = now_dt.strftime("%d/%m/%Y às %H:%M:%S")
 
-    # Verificar dados atuais
-    cursor.execute("SELECT proposal_image_path, proposal_image_date FROM interactions WHERE row_id=?", (int(row_id),))
-    existing = cursor.fetchone()
-    current_img_path = existing[0] if existing and existing[0] else ""
-    current_img_date = existing[1] if existing and existing[1] else ""
+    current_img_path = ""
+    current_img_date = ""
 
     # Se uma nova imagem foi enviada
     if image_bytes is not None and filename:
@@ -121,18 +133,72 @@ def save_proposal(row_id, notes, image_bytes=None, filename=None):
         current_img_path = target_path
         current_img_date = now_str
 
+        # Inserir no histórico de imagens
+        cursor.execute("""
+            INSERT INTO proposal_images (row_id, cnpj, image_path, image_date, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (int(row_id), str(cnpj), target_path, now_str, now_dt.strftime("%Y-%m-%d %H:%M:%S")))
+
+    # Atualizar notas e última imagem na tabela principal
     cursor.execute("""
-        INSERT INTO interactions (row_id, proposal_notes, proposal_image_path, proposal_image_date, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO interactions (row_id, cnpj, proposal_notes, proposal_image_path, proposal_image_date, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(row_id) DO UPDATE SET
             proposal_notes=excluded.proposal_notes,
             proposal_image_path=CASE WHEN excluded.proposal_image_path != '' THEN excluded.proposal_image_path ELSE interactions.proposal_image_path END,
             proposal_image_date=CASE WHEN excluded.proposal_image_date != '' THEN excluded.proposal_image_date ELSE interactions.proposal_image_date END,
             updated_at=excluded.updated_at
-    """, (int(row_id), str(notes), current_img_path, current_img_date, now_dt.strftime("%Y-%m-%d %H:%M:%S")))
+    """, (int(row_id), str(cnpj), str(notes), current_img_path, current_img_date, now_dt.strftime("%Y-%m-%d %H:%M:%S")))
 
     conn.commit()
     conn.close()
+
+def get_proposal_images(row_id):
+    """Retorna todas as imagens da proposta associadas a um cliente (ordenadas da mais recente para a mais antiga)."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT image_path, image_date 
+        FROM proposal_images 
+        WHERE row_id=? 
+        ORDER BY id DESC
+    """, (int(row_id),))
+    
+    rows = cursor.fetchall()
+    images = []
+    seen_paths = set()
+    
+    for r in rows:
+        path, dt = r[0], r[1]
+        if path and os.path.exists(path) and path not in seen_paths:
+            images.append({"path": path, "date": dt})
+            seen_paths.add(path)
+
+    # Backup/Fallback: Se tabela proposal_images não tem registros, checar tabela principal
+    if not images:
+        cursor.execute("SELECT proposal_image_path, proposal_image_date FROM interactions WHERE row_id=?", (int(row_id),))
+        row = cursor.fetchone()
+        if row and row[0] and os.path.exists(row[0]):
+            images.append({"path": row[0], "date": row[1] or "Data não registrada"})
+
+    conn.close()
+    return images
+
+def import_new_dataset(file_bytes, filename):
+    """Recebe um novo arquivo Excel/CSV e atualiza a planilha base de dados."""
+    os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
+    
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == ".csv":
+        df = pd.read_csv(io.BytesIO(file_bytes))
+    else:
+        df = pd.read_excel(io.BytesIO(file_bytes))
+        
+    # Salvar na localização padrão do projeto
+    df.to_excel(DATA_PATH, index=False)
+    return len(df)
 
 def save_interaction(row_id, cnpj, cliente, status, atendeu, observacao, consultor="Consultor"):
     """Salva ou atualiza a interação do consultor para determinado cliente."""
