@@ -52,14 +52,6 @@ st.markdown("""
         font-weight: bold;
         display: inline-block;
     }
-    .card-box {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 1rem;
-        margin-bottom: 1rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
     .stButton>button {
         border-radius: 6px;
     }
@@ -248,7 +240,7 @@ with col_info2:
 
 st.divider()
 
-# === BLOCO 2: PAINEL DA PROPOSTA (LADO A LADO: NOTAS/COLAR DA ESQUERDA vs PREVIEW DA IMAGEM NA DIREITA) ===
+# === BLOCO 2: PAINEL DA PROPOSTA (NOTAS DA ESQUERDA vs IMAGEM NA DIREITA COM OPÇÃO DE DELETAR) ===
 st.markdown("### 📋 Painel da Proposta (Pré-Atendimento)")
 
 col_prop_left, col_prop_right = st.columns([1, 1])
@@ -303,14 +295,31 @@ with col_prop_right:
     
     if images_list:
         newest_img = images_list[0]
-        st.success(f"📅 **Enviado em:** `{newest_img['date']}`")
+        
+        col_img_date, col_img_del = st.columns([3, 1])
+        with col_img_date:
+            st.success(f"📅 **Enviado em:** `{newest_img['date']}`")
+        with col_img_del:
+            if st.button("🗑️ Excluir Imagem", key=f"del_newest_{current_row_idx}"):
+                db.delete_proposal_image(current_row_idx, newest_img['path'])
+                st.toast("🗑️ Imagem excluída com sucesso!", icon="🚮")
+                st.rerun()
+                
         st.image(newest_img['path'], use_container_width=True)
         
         # Histórico de imagens anteriores (se houver mais de uma)
         if len(images_list) > 1:
             with st.expander(f"📜 Histórico ({len(images_list) - 1} imagens anteriores)"):
                 for idx_img, img_item in enumerate(images_list[1:], start=1):
-                    st.caption(f"**Enviado em: {img_item['date']}**")
+                    col_hist_dt, col_hist_del = st.columns([3, 1])
+                    with col_hist_dt:
+                        st.caption(f"**Enviado em: {img_item['date']}**")
+                    with col_hist_del:
+                        if st.button("🗑️ Excluir", key=f"del_hist_{current_row_idx}_{idx_img}"):
+                            db.delete_proposal_image(current_row_idx, img_item['path'])
+                            st.toast("🗑️ Imagem antiga excluída com sucesso!", icon="🚮")
+                            st.rerun()
+                            
                     st.image(img_item['path'], use_container_width=True)
                     st.divider()
     else:

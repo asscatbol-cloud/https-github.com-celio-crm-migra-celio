@@ -168,8 +168,6 @@ def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
 
     conn.commit()
     conn.close()
-    
-    # Limpar cache do Streamlit para atualizar a UI instantaneamente
     st.cache_data.clear()
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -205,6 +203,36 @@ def get_proposal_images(row_id):
 
     conn.close()
     return images
+
+def delete_proposal_image(row_id, image_path):
+    """Exclui uma imagem específica do cliente do disco e do banco de dados SQLite."""
+    init_db()
+    
+    if image_path and os.path.exists(image_path):
+        try:
+            os.remove(image_path)
+        except Exception:
+            pass
+            
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Deletar da tabela proposal_images
+    cursor.execute("DELETE FROM proposal_images WHERE row_id=? AND image_path=?", (int(row_id), image_path))
+    
+    # Buscar imagem restante mais recente
+    cursor.execute("SELECT image_path, image_date FROM proposal_images WHERE row_id=? ORDER BY id DESC LIMIT 1", (int(row_id),))
+    remaining = cursor.fetchone()
+    
+    new_path = remaining[0] if remaining else ""
+    new_date = remaining[1] if remaining else ""
+    
+    # Atualizar tabela principal interactions
+    cursor.execute("UPDATE interactions SET proposal_image_path=?, proposal_image_date=? WHERE row_id=?", (new_path, new_date, int(row_id)))
+    
+    conn.commit()
+    conn.close()
+    st.cache_data.clear()
 
 def import_new_dataset(file_bytes, filename):
     """Recebe um novo arquivo Excel/CSV e atualiza a planilha base de dados."""
