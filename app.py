@@ -67,15 +67,23 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Função auxiliar para extrair texto de forma 100% segura contra valores nulos (nan)
-def get_str(data_dict, key, default="N/I"):
-    val = data_dict.get(key, "")
-    if pd.isna(val) or val is None:
-        return default
-    val_str = str(val).strip()
-    if val_str.lower() in ["nan", "none", "<na>", ""]:
-        return default
-    return val_str
+# Função auxiliar resiliente para extração de campos do Excel/DB (Multi-Key e Normalizado)
+def get_str(data_dict, keys, default="N/I"):
+    if isinstance(keys, str):
+        keys = [keys]
+    
+    # Dicionário normalizado (sem espaços nas chaves, em maiúsculas)
+    norm_dict = {str(k).strip().upper().replace(" ", "_"): v for k, v in data_dict.items()}
+    
+    for key in keys:
+        norm_target = str(key).strip().upper().replace(" ", "_")
+        if norm_target in norm_dict:
+            val = norm_dict[norm_target]
+            if not pd.isna(val) and val is not None:
+                val_str = str(val).strip()
+                if val_str.lower() not in ["nan", "none", "<na>", "", "0.0", "nan.0"]:
+                    return val_str
+    return default
 
 # Carregar dados do banco/excel
 df_raw = db.load_dataset()
@@ -87,7 +95,12 @@ if "current_index" not in st.session_state:
 if "consultor" not in st.session_state:
     st.session_state.consultor = "Consultor"
 
-# Callback para quando o usuário altera o seletor na sidebar
+# Função central para alterar cliente garantindo sincronia total dos widgets da sidebar
+def set_current_client(index):
+    st.session_state.current_index = index
+    st.session_state.select_client_widget = index
+
+# Callback do seletor da sidebar
 def on_selectbox_change():
     if "select_client_widget" in st.session_state:
         st.session_state.current_index = st.session_state.select_client_widget
@@ -101,10 +114,10 @@ st.session_state.consultor = consultor_input
 
 st.sidebar.divider()
 
-# RECURSO 5: FILTRO POR VENDEDOR / CARTEIRA
+# RECURSO: FILTRO POR VENDEDOR / CARTEIRA
 st.sidebar.subheader("👤 Vendedor / Carteira")
 lista_vendedores = set()
-for v in df_raw["QUEM VENDEU"].dropna().tolist() + df_raw["CARTEIRA"].dropna().tolist():
+for v in df_raw.get("QUEM VENDEU", pd.Series(dtype=str)).dropna().tolist() + df_raw.get("CARTEIRA", pd.Series(dtype=str)).dropna().tolist():
     v_clean = str(v).strip()
     if v_clean and v_clean.lower() not in ["nan", "none", ""]:
         lista_vendedores.add(v_clean)
@@ -113,7 +126,9 @@ vendedor_selecionado = st.sidebar.selectbox("Filtrar por Carteira:", ["Todas"] +
 
 # Filtrar DataFrame pelo Vendedor se selecionado
 if vendedor_selecionado != "Todas":
-    df = df_raw[(df_raw["QUEM VENDEU"] == vendedor_selecionado) | (df_raw["CARTEIRA"] == vendedor_selecionado)].copy()
+    col_vendeu = "QUEM VENDEU" if "QUEM VENDEU" in df_raw.columns else "QUEM_VENDEU"
+    col_cart = "CARTEIRA" if "CARTEIRA" in df_raw.columns else "CARTEIRA"
+    df = df_raw[(df_raw[col_vendeu] == vendedor_selecionado) | (df_raw[col_cart] == vendedor_selecionado)].copy()
     if df.empty:
         st.sidebar.warning("Nenhum cliente nesta carteira. Exibindo todos.")
         df = df_raw.copy()
@@ -132,7 +147,7 @@ st.sidebar.write(f"**{atendidos}** de **{total_clientes}** clientes atendidos ({
 
 st.sidebar.divider()
 
-# RECURSO 1: ALERTAS DE RETORNO / AGENDAMENTOS (FOLLOW-UP)
+# RECURSO: ALERTAS DE RETORNO / AGENDAMENTOS (FOLLOW-UP)
 st.sidebar.subheader("🔔 Agendamentos de Hoje")
 df_agendados = df[df["STATUS_CHAMADA"] == "Agendado"]
 today_str = datetime.now().strftime("%Y-%m-%d")
@@ -142,13 +157,14 @@ for idx, r in df_agendados.iterrows():
     cb_date = str(r.get("CALLBACK_DATE", "")).strip()
     cb_time = str(r.get("CALLBACK_TIME", "")).strip()
     if cb_date <= today_str:
-        agendados_hoje.append((idx, r.get("CLIENTE", ""), cb_date, cb_time))
+        nome_c = get_str(r.to_dict(), ["CLIENTE", "RAZAO_SOCIAL"])
+        agendados_hoje.append((idx, nome_c, cb_date, cb_time))
 
 if agendados_hoje:
     st.sidebar.warning(f"⚠️ **{len(agendados_hoje)} retornos pendentes para hoje!**")
     for row_i, c_nome, c_d, c_t in agendados_hoje:
         if st.sidebar.button(f"📞 #{row_i+1} - {c_nome[:18]}... ({c_t})", key=f"btn_cb_{row_i}"):
-            st.session_state.current_index = row_i
+            set_current_client(row_i)
             st.rerun()
 else:
     st.sidebar.success(" Nenhuma ligação agendada pendente para hoje.")
@@ -175,13 +191,17 @@ if not lista_indices:
 if st.session_state.current_index not in lista_indices:
     st.session_state.current_index = lista_indices[0]
 
+# Garantir sincronia inicial da chave da sidebar
+if "select_client_widget" not in st.session_state or st.session_state.select_client_widget not in lista_indices:
+    st.session_state.select_client_widget = st.session_state.current_index
+
 selected_pos = lista_indices.index(st.session_state.current_index) if st.session_state.current_index in lista_indices else 0
 
 st.sidebar.selectbox(
     "Ir direto para cliente:",
     options=lista_indices,
     index=selected_pos,
-    format_func=lambda i: f"#{i+1} - {get_str(df_raw.iloc[i].to_dict(), 'CLIENTE')[:25]}...",
+    format_func=lambda i: f"#{i+1} - {get_str(df_raw.iloc[i].to_dict(), ['CLIENTE', 'RAZAO_SOCIAL'])[:25]}...",
     key="select_client_widget",
     on_change=on_selectbox_change
 )
@@ -200,7 +220,7 @@ if uploaded_sheet is not None:
         file_bytes = uploaded_sheet.read()
         num_rows = db.import_new_dataset(file_bytes, uploaded_sheet.name)
         st.sidebar.success(f"✅ Planilha carregada! {num_rows} clientes importados.")
-        st.session_state.current_index = 0
+        set_current_client(0)
         st.rerun()
 
 st.sidebar.divider()
@@ -225,7 +245,6 @@ modo_app = st.radio("Selecione o Modo:", ["📞 Atendimento Individual", "📊 D
 st.divider()
 
 if modo_app == "📊 Dashboard Estatístico da Carteira":
-    # === RECURSO 2: DASHBOARD GERENCIAL & ESTATÍSTICAS ===
     st.markdown("## 📊 Dashboard Gerencial da Carteira")
     
     col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
@@ -258,8 +277,9 @@ if modo_app == "📊 Dashboard Estatístico da Carteira":
         
     with col_g2:
         st.markdown("### 👤 Atendimentos por Vendedor / Carteira")
-        if "QUEM VENDEU" in df_raw.columns:
-            vendedor_counts = df_raw[df_raw["STATUS_CHAMADA"] != "Pendente"]["QUEM VENDEU"].value_counts()
+        col_vend_name = "QUEM VENDEU" if "QUEM VENDEU" in df_raw.columns else "QUEM_VENDEU"
+        if col_vend_name in df_raw.columns:
+            vendedor_counts = df_raw[df_raw["STATUS_CHAMADA"] != "Pendente"][col_vend_name].value_counts()
             if not vendedor_counts.empty:
                 st.bar_chart(vendedor_counts)
             else:
@@ -271,23 +291,30 @@ else:
     row_dict = df_raw.iloc[current_row_idx].to_dict()
     real_row_id = int(row_dict.get("ROW_ID", current_row_idx))
 
-    cliente_nome = get_str(row_dict, "CLIENTE")
-    cnpj_val = get_str(row_dict, "CNPJ_CLIENTE")
-    contato_nome = get_str(row_dict, "CONTATO")
-    tel_raw = get_str(row_dict, "NR_TELEFONE", "")
-    municipio_val = get_str(row_dict, "DS_MUNICIPIO")
-    uf_val = get_str(row_dict, "UF")
-    endereco_val = get_str(row_dict, "NR_ENDERECO")
-    numero_val = get_str(row_dict, "Nº", "")
-    cep_val = get_str(row_dict, "NR_CEP", "")
-    plano_val = get_str(row_dict, "PLANO")
-    linhas_val = get_str(row_dict, "QTDE DE LINHAS ")
-    tipo_rede_val = get_str(row_dict, "TIPO_REDE", "SEM GPON").upper()
-    cobertura_val = get_str(row_dict, "TEM_COBERTURA_BANDA_LARGA", "Não")
-    mancha_val = get_str(row_dict, "TA NA MANCHA ", "0")
-    marca_val = get_str(row_dict, "APARELHO_TRAFEGO_MARCA", "")
-    modelo_val = get_str(row_dict, "APARELHO_TRAFEGO_MODELO", "")
-    recomendacao_val = get_str(row_dict, "RECOMENDACAO_APARELHO_LINHA", "Sem recomendação específica")
+    cliente_nome = get_str(row_dict, ["CLIENTE", "RAZAO_SOCIAL", "NOME_CLIENTE"])
+    cnpj_val = get_str(row_dict, ["CNPJ_CLIENTE", "CNPJ", "CGC"])
+    contato_nome = get_str(row_dict, ["CONTATO", "NOME_CONTATO", "CONTATO_CLIENTE"])
+    tel_raw = get_str(row_dict, ["NR_TELEFONE", "TELEFONE", "CELULAR", "FONE"], "")
+    municipio_val = get_str(row_dict, ["DS_MUNICIPIO", "MUNICIPIO", "CIDADE"])
+    uf_val = get_str(row_dict, ["UF", "ESTADO"])
+    endereco_val = get_str(row_dict, ["NR_ENDERECO", "ENDERECO", "LOGRADOURO"])
+    numero_val = get_str(row_dict, ["Nº", "N", "NUMERO"], "")
+    cep_val = get_str(row_dict, ["NR_CEP", "CEP"], "")
+    plano_val = get_str(row_dict, ["PLANO", "PLANO_ATUAL"])
+    linhas_val = get_str(row_dict, ["QTDE DE LINHAS", "QTDE_DE_LINHAS", "LINHAS", "QT_PLANTA"], "1")
+    tipo_rede_val = get_str(row_dict, ["TIPO_REDE", "REDE"], "SEM GPON").upper()
+    cobertura_val = get_str(row_dict, ["TEM_COBERTURA_BANDA_LARGA", "COBERTURA", "MANCHA"], "Não")
+    marca_val = get_str(row_dict, ["APARELHO_TRAFEGO_MARCA", "MARCA_APARELHO", "MARCA"], "")
+    modelo_val = get_str(row_dict, ["APARELHO_TRAFEGO_MODELO", "MODELO_APARELHO", "MODELO"], "")
+    
+    # Recomendação com fallback seguro para a coluna APAREHOS
+    rec_linha = get_str(row_dict, ["RECOMENDACAO_APARELHO_LINHA", "RECOMENDACAO"])
+    if rec_linha != "N/I":
+        recomendacao_val = rec_linha
+    else:
+        rec_ap = get_str(row_dict, "APAREHOS")
+        recomendacao_val = rec_ap if rec_ap not in ["N/I", "0"] else "Sem recomendação específica"
+
     status_atual = get_str(row_dict, "STATUS_CHAMADA", "Pendente")
     saved_atendeu = get_str(row_dict, "ATENDEU", "Não Registrado")
     saved_obs = get_str(row_dict, "INTERACAO_CONSULTOR", "")
@@ -315,9 +342,9 @@ else:
     with col_info1:
         st.markdown("####  Empresa & Contato")
         st.markdown(f"**CNPJ:** `{cnpj_val}`")
-        st.markdown(f"**Contato:** {contato_nome}")
+        st.markdown(f"**Contato:** **{contato_nome}**")
         
-        # MENSAGEM SOLICITADA PELO USUÁRIO (BOM DIA/BOA TARDE AUTOMÁTICO)
+        # MENSAGEM AUTOMÁTICA DE WHATSAPP (BOM DIA/BOA TARDE)
         tel_clean = re.sub(r'\D', '', tel_raw.replace('.0', ''))
         st.markdown(f"**Telefone:** `{tel_raw if tel_raw else 'N/I'}`")
         
@@ -520,7 +547,7 @@ else:
         if st.button("◀ Cliente Anterior", disabled=(current_row_idx == 0), use_container_width=True):
             curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
             if curr_pos > 0:
-                st.session_state.current_index = lista_indices[curr_pos - 1]
+                set_current_client(lista_indices[curr_pos - 1])
                 st.rerun()
 
     with col_nav2:
@@ -544,12 +571,12 @@ else:
                 
                 curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
                 if curr_pos < len(lista_indices) - 1:
-                    st.session_state.current_index = lista_indices[curr_pos + 1]
+                    set_current_client(lista_indices[curr_pos + 1])
                 st.rerun()
 
     with col_nav3:
         if st.button("Próximo Sem Salvar ▶", disabled=(current_row_idx == lista_indices[-1]), use_container_width=True):
             curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
             if curr_pos < len(lista_indices) - 1:
-                st.session_state.current_index = lista_indices[curr_pos + 1]
+                set_current_client(lista_indices[curr_pos + 1])
                 st.rerun()

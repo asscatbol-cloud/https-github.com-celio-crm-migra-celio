@@ -84,7 +84,13 @@ def load_dataset():
         raise FileNotFoundError(f"Arquivo não encontrado em: {DATA_PATH}")
 
     df = pd.read_excel(DATA_PATH)
+    # Strip spaces from column headers
+    df.columns = [str(c).strip() for c in df.columns]
     df["ROW_ID"] = df.index
+
+    # Strip spaces from string cells across all text columns
+    for col in df.select_dtypes(include=['object', 'string']).columns:
+        df[col] = df[col].astype(str).replace(["nan", "NaN", "None", "<NA>"], "").str.strip()
 
     # Carregar interações e propostas existentes
     conn = sqlite3.connect(DB_PATH)
@@ -120,17 +126,6 @@ def load_dataset():
     merged["CALLBACK_DATE"] = merged["CALLBACK_DATE"].fillna("")
     merged["CALLBACK_TIME"] = merged["CALLBACK_TIME"].fillna("")
     merged["DATA_ATENDIMENTO"] = merged["DATA_ATENDIMENTO"].fillna("")
-
-    # Limpeza de campos nulos em strings para exibição limpa no app
-    string_cols = [
-        "CLIENTE", "CNPJ_CLIENTE", "CONTATO", "NR_TELEFONE", "DS_MUNICIPIO", "UF",
-        "NR_ENDERECO", "Nº", "NR_CEP", "PLANO", "TIPO_REDE", "TEM_COBERTURA_BANDA_LARGA",
-        "TA NA MANCHA ", "APARELHO_TRAFEGO_MARCA", "APARELHO_TRAFEGO_MODELO",
-        "RECOMENDACAO_APARELHO_LINHA", "CARTEIRA", "QUEM VENDEU"
-    ]
-    for col in string_cols:
-        if col in merged.columns:
-            merged[col] = merged[col].astype(str).replace(["nan", "NaN", "None", "<NA>"], "").str.strip()
 
     return merged
 
