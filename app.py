@@ -253,7 +253,13 @@ if modo_app == "📊 Dashboard Estatístico da Carteira":
     atendidos_cart = (df_raw["STATUS_CHAMADA"] != "Pendente").sum()
     atendeu_sucesso = (df_raw["STATUS_CHAMADA"] == "Atendeu").sum()
     prop_com_img = df_raw["PROPOSAL_IMAGE_PATH"].apply(lambda p: bool(p and str(p).strip())).sum()
-    gpon_count = df_raw["TIPO_REDE"].apply(lambda r: "GPON" in str(r).upper()).sum()
+    def check_viabilidade(r):
+        t_rede = str(r.get("TIPO_REDE", "")).strip().upper()
+        t_cob = str(r.get("TEM_COBERTURA_BANDA_LARGA", "")).strip().upper()
+        t_man = str(r.get("TA NA MANCHA ", r.get("TA_NA_MANCHA_", ""))).strip().upper()
+        return (t_rede == "GPON") or (t_cob == "SIM") or ("SIM" in t_man)
+
+    gpon_count = df_raw.apply(check_viabilidade, axis=1).sum()
     
     with col_m1:
         st.metric("Total de Clientes", total_cart)
@@ -382,11 +388,13 @@ else:
     with col_info2:
         st.markdown("#### ⚡ Viabilidade de Rede & Aparelhos")
         
-        tem_gpon = "GPON" in tipo_rede_val or cobertura_val.lower() in ["sim", "1"]
+        mancha_val = get_str(row_dict, ["TA_NA_MANCHA_", "TA NA MANCHA"], "0")
+        tem_gpon = (tipo_rede_val == "GPON") or (cobertura_val.upper() == "SIM") or ("SIM" in mancha_val.upper())
         if tem_gpon:
-            st.markdown(f"**Rede:** <span class='badge-gpon'>{tipo_rede_val} (Com Viabilidade)</span>", unsafe_allow_html=True)
+            label_gpon = tipo_rede_val if tipo_rede_val not in ["N/I", "SEM GPON"] else ("GPON" if cobertura_val.upper() == "SIM" else "MANCHA FIBRA")
+            st.markdown(f"**Rede:** <span class='badge-gpon'>{label_gpon} (Com Viabilidade)</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"**Rede:** <span class='badge-no-gpon'>{tipo_rede_val if tipo_rede_val != 'N/I' else 'SEM GPON'} (Sem Cobertura)</span>", unsafe_allow_html=True)
+            st.markdown(f"**Rede:** <span class='badge-no-gpon'>SEM GPON (Sem Cobertura)</span>", unsafe_allow_html=True)
 
         aparelho_trafego = f"{marca_val} {modelo_val}".strip()
         st.markdown(f"**Aparelho em Tráfego:** {aparelho_trafego if aparelho_trafego else 'Não informado'}")
