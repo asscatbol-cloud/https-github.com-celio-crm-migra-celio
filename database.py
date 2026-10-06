@@ -29,6 +29,8 @@ def init_db():
             proposal_notes TEXT,
             proposal_image_path TEXT,
             proposal_image_date TIMESTAMP,
+            callback_date TEXT,
+            callback_time TEXT,
             updated_at TIMESTAMP
         )
     """)
@@ -49,7 +51,9 @@ def init_db():
     for col_def in [
         ("proposal_notes", "TEXT"),
         ("proposal_image_path", "TEXT"),
-        ("proposal_image_date", "TIMESTAMP")
+        ("proposal_image_date", "TIMESTAMP"),
+        ("callback_date", "TEXT"),
+        ("callback_time", "TEXT")
     ]:
         try:
             cursor.execute(f"ALTER TABLE interactions ADD COLUMN {col_def[0]} {col_def[1]}")
@@ -94,6 +98,8 @@ def load_dataset():
             proposal_notes as PROPOSAL_NOTES,
             proposal_image_path as PROPOSAL_IMAGE_PATH,
             proposal_image_date as PROPOSAL_IMAGE_DATE,
+            callback_date as CALLBACK_DATE,
+            callback_time as CALLBACK_TIME,
             updated_at as DATA_ATENDIMENTO 
         FROM interactions
     """
@@ -111,6 +117,8 @@ def load_dataset():
     merged["PROPOSAL_NOTES"] = merged["PROPOSAL_NOTES"].fillna("")
     merged["PROPOSAL_IMAGE_PATH"] = merged["PROPOSAL_IMAGE_PATH"].fillna("")
     merged["PROPOSAL_IMAGE_DATE"] = merged["PROPOSAL_IMAGE_DATE"].fillna("")
+    merged["CALLBACK_DATE"] = merged["CALLBACK_DATE"].fillna("")
+    merged["CALLBACK_TIME"] = merged["CALLBACK_TIME"].fillna("")
     merged["DATA_ATENDIMENTO"] = merged["DATA_ATENDIMENTO"].fillna("")
 
     # Limpeza de campos nulos em strings para exibição limpa no app
@@ -118,7 +126,7 @@ def load_dataset():
         "CLIENTE", "CNPJ_CLIENTE", "CONTATO", "NR_TELEFONE", "DS_MUNICIPIO", "UF",
         "NR_ENDERECO", "Nº", "NR_CEP", "PLANO", "TIPO_REDE", "TEM_COBERTURA_BANDA_LARGA",
         "TA NA MANCHA ", "APARELHO_TRAFEGO_MARCA", "APARELHO_TRAFEGO_MODELO",
-        "RECOMENDACAO_APARELHO_LINHA"
+        "RECOMENDACAO_APARELHO_LINHA", "CARTEIRA", "QUEM VENDEU"
     ]
     for col in string_cols:
         if col in merged.columns:
@@ -248,7 +256,7 @@ def import_new_dataset(file_bytes, filename):
     st.cache_data.clear()
     return len(df)
 
-def save_interaction(row_id, cnpj, cliente, status, atendeu, observacao, consultor="Consultor"):
+def save_interaction(row_id, cnpj, cliente, status, atendeu, observacao, consultor="Consultor", callback_date="", callback_time=""):
     """Salva ou atualiza a interação do consultor para determinado cliente."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
@@ -256,15 +264,17 @@ def save_interaction(row_id, cnpj, cliente, status, atendeu, observacao, consult
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     cursor.execute("""
-        INSERT INTO interactions (row_id, cnpj, cliente, status, atendeu, observacao, consultor, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO interactions (row_id, cnpj, cliente, status, atendeu, observacao, consultor, callback_date, callback_time, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(row_id) DO UPDATE SET
             status=excluded.status,
             atendeu=excluded.atendeu,
             observacao=excluded.observacao,
             consultor=excluded.consultor,
+            callback_date=excluded.callback_date,
+            callback_time=excluded.callback_time,
             updated_at=excluded.updated_at
-    """, (int(row_id), str(cnpj), str(cliente), str(status), str(atendeu), str(observacao), str(consultor), now))
+    """, (int(row_id), str(cnpj), str(cliente), str(status), str(atendeu), str(observacao), str(consultor), str(callback_date), str(callback_time), now))
 
     conn.commit()
     conn.close()
