@@ -101,7 +101,7 @@ if "current_index" not in st.session_state:
     st.session_state.current_index = 0
 
 if "consultor" not in st.session_state:
-    st.session_state.consultor = "Consultor"
+    st.session_state.consultor = "Celio"
 
 # === CALLBACKS SEGUROS PARA MUDANÇA DE ESTADO SEM ERROS STREAMLIT ===
 def change_client_callback(new_index):
@@ -431,33 +431,41 @@ else:
         hora_atual = datetime.now().hour
         saudacao = "Bom dia" if hora_atual < 12 else "Boa tarde"
         
-        # MENSAGEM EXATA EXIGIDA PELO USUÁRIO
-        msg_txt = f"{saudacao} meu nome é {st.session_state.consultor} sou consultor vivo empresas, responsavel pelas linhas moveis da sua empresa, temos uma revisão das ofertas e tenho algumas opções que gostaria de discutir com você podemos conversar?"
+        contato_msg = contato_nome if contato_nome not in ["N/I", ""] else ""
+        cliente_msg = cliente_nome if cliente_nome not in ["N/I", ""] else ""
+        consultor_msg = st.session_state.get("consultor", "Celio")
+
+        # MENSAGEM EXATA EXIGIDA PELO USUÁRIO (COM CONTATO E CLIENTE)
+        msg_txt = f"{saudacao} {contato_msg} meu nome é {consultor_msg} sou consultor vivo empresas, responsavel pelas linhas moveis da sua empresa {cliente_msg}, temos uma revisão das ofertas e tenho algumas opções que gostaria de discutir com você podemos conversar?".replace("  ", " ").strip()
         msg_encoded = urllib.parse.quote(msg_txt)
         
         if tel_clean:
             tel_wa = tel_clean if tel_clean.startswith("55") else "55" + tel_clean
             wa_link_url = f"https://web.whatsapp.com/send?phone={tel_wa}&text={msg_encoded}"
+            json_msg_str = repr(msg_txt)
             
             components.html(f"""
-                <a href="{wa_link_url}" 
-                   onclick="window.open(this.href, 'whatsapp_crm_window'); return false;" 
-                   target="whatsapp_crm_window" 
-                   style="
-                       background-color: #25D366; 
-                       color: white; 
-                       padding: 9px 16px; 
-                       text-decoration: none; 
-                       border-radius: 6px; 
-                       font-weight: bold; 
-                       display: inline-block;
-                       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                       font-size: 14px;
-                   ">📱 Iniciar Conversa no WhatsApp (Reaproveitar Mesma Aba)</a>
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px;">
+                    <a href="{wa_link_url}" 
+                       onclick="window.open(this.href, 'whatsapp_crm_window'); return true;" 
+                       target="whatsapp_crm_window" 
+                       style="
+                           background-color: #25D366; 
+                           color: white; 
+                           padding: 9px 16px; 
+                           text-decoration: none; 
+                           border-radius: 6px; 
+                           font-weight: bold; 
+                           display: inline-block;
+                           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                           font-size: 13px;
+                           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                       ">📱 Abrir no WhatsApp Web (Aba Única)</a>
+                </div>
             """, height=48)
             
         # Caixa com a mensagem pronta para copiar com 1 clique
-        st.text_area("Mensagem Pronta para o WhatsApp:", value=msg_txt, height=85, key=f"wa_msg_box_{current_row_idx}")
+        st.text_area("Mensagem Pronta para o WhatsApp:", value=msg_txt, height=95, key=f"wa_msg_box_{current_row_idx}")
 
         st.markdown(f"**Endereço:** {endereco_val}, Nº {numero_val} - {municipio_val}/{uf_val}")
         st.markdown(f"**Plano Atual:** `{plano_val}` ({linhas_val} linhas)")
