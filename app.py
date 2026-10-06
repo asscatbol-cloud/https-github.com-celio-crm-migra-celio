@@ -439,18 +439,22 @@ else:
             tel_wa = tel_clean if tel_clean.startswith("55") else "55" + tel_clean
             wa_link_url = f"https://web.whatsapp.com/send?phone={tel_wa}&text={msg_encoded}"
             
-            st.markdown(f"""
-                <a href="{wa_link_url}" target="whatsapp_web_window" style="
-                    background-color: #25D366; 
-                    color: white; 
-                    padding: 8px 16px; 
-                    text-decoration: none; 
-                    border-radius: 6px; 
-                    font-weight: bold; 
-                    display: inline-block;
-                    margin-top: 5px;
-                ">📱 Iniciar Conversa no WhatsApp (Janela Única)</a>
-            """, unsafe_allow_html=True)
+            components.html(f"""
+                <a href="{wa_link_url}" 
+                   onclick="window.open(this.href, 'whatsapp_crm_window'); return false;" 
+                   target="whatsapp_crm_window" 
+                   style="
+                       background-color: #25D366; 
+                       color: white; 
+                       padding: 9px 16px; 
+                       text-decoration: none; 
+                       border-radius: 6px; 
+                       font-weight: bold; 
+                       display: inline-block;
+                       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                       font-size: 14px;
+                   ">📱 Iniciar Conversa no WhatsApp (Reaproveitar Mesma Aba)</a>
+            """, height=48)
             
         # Caixa com a mensagem pronta para copiar com 1 clique
         st.text_area("Mensagem Pronta para o WhatsApp:", value=msg_txt, height=85, key=f"wa_msg_box_{current_row_idx}")
