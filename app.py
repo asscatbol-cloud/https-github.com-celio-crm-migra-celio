@@ -431,12 +431,13 @@ else:
         hora_atual = datetime.now().hour
         saudacao = "Bom dia" if hora_atual < 12 else "Boa tarde"
         
-        contato_msg = contato_nome if contato_nome not in ["N/I", ""] else ""
+        contato_full = contato_nome if contato_nome not in ["N/I", ""] else ""
+        primeiro_nome = contato_full.strip().split()[0].title() if contato_full.strip() else ""
         cliente_msg = cliente_nome if cliente_nome not in ["N/I", ""] else ""
         consultor_msg = st.session_state.get("consultor", "Celio")
 
-        # MENSAGEM EXATA EXIGIDA PELO USUÁRIO (COM CONTATO E CLIENTE)
-        msg_txt = f"{saudacao} {contato_msg} meu nome é {consultor_msg} sou consultor vivo empresas, responsavel pelas linhas moveis da sua empresa {cliente_msg}, temos uma revisão das ofertas e tenho algumas opções que gostaria de discutir com você podemos conversar?".replace("  ", " ").strip()
+        # MENSAGEM EXATA EXIGIDA PELO USUÁRIO (COM APENAS O PRIMEIRO NOME DO CONTATO)
+        msg_txt = f"{saudacao} {primeiro_nome} meu nome é {consultor_msg} sou consultor vivo empresas, responsavel pelas linhas moveis da sua empresa {cliente_msg}, temos uma revisão das ofertas e tenho algumas opções que gostaria de discutir com você podemos conversar?".replace("  ", " ").strip()
         msg_encoded = urllib.parse.quote(msg_txt)
         
         if tel_clean:
