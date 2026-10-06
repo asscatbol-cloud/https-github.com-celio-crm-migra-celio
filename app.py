@@ -85,7 +85,7 @@ if "current_index" not in st.session_state:
     st.session_state.current_index = 0
 
 if "consultor" not in st.session_state:
-    st.session_state.consultor = "Consultor 1"
+    st.session_state.consultor = "Consultor"
 
 # Callback para quando o usuário altera o seletor na sidebar
 def on_selectbox_change():
@@ -269,6 +269,7 @@ else:
     # === MODO ATENDIMENTO INDIVIDUAL ===
     current_row_idx = st.session_state.current_index
     row_dict = df_raw.iloc[current_row_idx].to_dict()
+    real_row_id = int(row_dict.get("ROW_ID", current_row_idx))
 
     cliente_nome = get_str(row_dict, "CLIENTE")
     cnpj_val = get_str(row_dict, "CNPJ_CLIENTE")
@@ -316,18 +317,20 @@ else:
         st.markdown(f"**CNPJ:** `{cnpj_val}`")
         st.markdown(f"**Contato:** {contato_nome}")
         
-        # RECURSO 4: WHATSAPP COM TARGET DE JANELA ÚNICA & MENSAGEM CUSTOMIZADA
+        # MENSAGEM SOLICITADA PELO USUÁRIO (BOM DIA/BOA TARDE AUTOMÁTICO)
         tel_clean = re.sub(r'\D', '', tel_raw.replace('.0', ''))
         st.markdown(f"**Telefone:** `{tel_raw if tel_raw else 'N/I'}`")
         
+        # Calcular Saudação com base no horário atual
+        hora_atual = datetime.now().hour
+        saudacao = "Bom dia" if hora_atual < 12 else "Boa tarde"
+        
+        # MENSAGEM EXATA EXIGIDA PELO USUÁRIO
+        msg_txt = f"{saudacao} meu nome é {st.session_state.consultor} sou consultor vivo empresas, responsavel pelas linhas moveis da sua empresa, temos uma revisão das ofertas e tenho algumas opções que gostaria de discutir com você podemos conversar?"
+        msg_encoded = urllib.parse.quote(msg_txt)
+        
         if tel_clean:
             tel_wa = tel_clean if tel_clean.startswith("55") else "55" + tel_clean
-            
-            # Modelo de Mensagem de Proposta
-            msg_txt = f"Olá, {contato_nome}! Sou o {st.session_state.consultor} da Vivo. Identifiquei uma excelente oportunidade de migração para a empresa {cliente_nome} (CNPJ: {cnpj_val}). Plano Proposto: {plano_val}. Recomendação: {recomendacao_val}. {proposal_notes_saved}"
-            msg_encoded = urllib.parse.quote(msg_txt)
-            
-            # LINK COM target="whatsapp_web_window" PARA NÃO ABRIR VÁRIAS ABAS
             wa_link_url = f"https://web.whatsapp.com/send?phone={tel_wa}&text={msg_encoded}"
             
             st.markdown(f"""
@@ -343,8 +346,8 @@ else:
                 ">📱 Iniciar Conversa no WhatsApp (Janela Única)</a>
             """, unsafe_allow_html=True)
             
-            # Botão de Copiar Mensagem Formatada
-            st.text_area("Mensagem Pronta para WhatsApp:", value=msg_txt, height=75, key=f"wa_msg_box_{current_row_idx}")
+        # Caixa com a mensagem pronta para copiar com 1 clique
+        st.text_area("Mensagem Pronta para o WhatsApp:", value=msg_txt, height=85, key=f"wa_msg_box_{current_row_idx}")
 
         st.markdown(f"**Endereço:** {endereco_val}, Nº {numero_val} - {municipio_val}/{uf_val}")
         st.markdown(f"**Plano Atual:** `{plano_val}` ({linhas_val} linhas)")
@@ -379,7 +382,7 @@ else:
             placeholder="Ex: Oferta de Migração 100GB por R$ 99/mês + aparelho Galaxy A17 grátis."
         )
         if st.button("💾 Salvar Notas da Proposta", key=f"btn_save_prop_notes_{current_row_idx}"):
-            db.save_proposal(current_row_idx, prop_notes_input, cnpj=cnpj_val)
+            db.save_proposal(real_row_id, prop_notes_input, cnpj=cnpj_val)
             st.toast("✅ Notas da proposta salvas!", icon="💾")
             st.rerun()
 
@@ -393,7 +396,7 @@ else:
             try:
                 header, b64_data = pasted_b64.split(",", 1)
                 img_bytes = base64.b64decode(b64_data)
-                db.save_proposal(current_row_idx, prop_notes_input, img_bytes, "print_colado.png", cnpj=cnpj_val)
+                db.save_proposal(real_row_id, prop_notes_input, img_bytes, "print_colado.png", cnpj=cnpj_val)
                 st.toast("✅ Print colado com sucesso!", icon="📸")
                 st.rerun()
             except Exception as e:
@@ -407,13 +410,13 @@ else:
             )
             if uploaded_file is not None:
                 image_bytes = uploaded_file.read()
-                db.save_proposal(current_row_idx, prop_notes_input, image_bytes, uploaded_file.name, cnpj=cnpj_val)
+                db.save_proposal(real_row_id, prop_notes_input, image_bytes, uploaded_file.name, cnpj=cnpj_val)
                 st.toast("✅ Imagem da proposta enviada!", icon="🎉")
                 st.rerun()
 
     with col_prop_right:
         st.markdown("##### 🖼️ Visualização da Proposta (Imagem)")
-        images_list = db.get_proposal_images(current_row_idx)
+        images_list = db.get_proposal_images(real_row_id)
         
         if images_list:
             newest_img = images_list[0]
@@ -423,7 +426,7 @@ else:
                 st.success(f"📅 **Enviado em:** `{newest_img['date']}`")
             with col_img_del:
                 if st.button("🗑️ Excluir Imagem", key=f"del_newest_{current_row_idx}"):
-                    db.delete_proposal_image(current_row_idx, newest_img['path'])
+                    db.delete_proposal_image(real_row_id, newest_img['path'])
                     st.toast("🗑️ Imagem excluída com sucesso!", icon="🚮")
                     st.rerun()
                     
@@ -437,7 +440,7 @@ else:
                             st.caption(f"**Enviado em: {img_item['date']}**")
                         with col_hist_del:
                             if st.button("🗑️ Excluir", key=f"del_hist_{current_row_idx}_{idx_img}"):
-                                db.delete_proposal_image(current_row_idx, img_item['path'])
+                                db.delete_proposal_image(real_row_id, img_item['path'])
                                 st.toast("🗑️ Imagem antiga excluída com sucesso!", icon="🚮")
                                 st.rerun()
                                 
@@ -451,7 +454,6 @@ else:
     # === BLOCO 3: REGISTRO DA CHAMADA E ATENDIMENTO ===
     st.markdown("### 📝 Registro do Atendimento (Obrigatório)")
 
-    # Botões de Resposta Rápida
     col_b1, col_b2, col_b3, col_b4 = st.columns(4)
 
     if f"status_choice_{current_row_idx}" not in st.session_state:
@@ -486,7 +488,7 @@ else:
 
     st.caption(f"Seleção: Chamada **{st.session_state[f'atendeu_choice_{current_row_idx}']}** | Status: **{st.session_state[f'status_choice_{current_row_idx}']}**")
 
-    # RECURSO 1: DATA E HORA DE AGENDAMENTO DE RETORNO (SE FOR AGENDADO)
+    # DATA E HORA DE AGENDAMENTO DE RETORNO (SE FOR AGENDADO)
     cb_date_val = ""
     cb_time_val = ""
     if st.session_state[f"status_choice_{current_row_idx}"] == "Agendado":
@@ -528,7 +530,7 @@ else:
         else:
             if st.button(" Gravar & Avançar para Próximo Cliente", type="primary", use_container_width=True):
                 db.save_interaction(
-                    row_id=current_row_idx,
+                    row_id=real_row_id,
                     cnpj=cnpj_val,
                     cliente=cliente_nome,
                     status=st.session_state[f"status_choice_{current_row_idx}"],
