@@ -2,6 +2,7 @@ import sqlite3
 import pandas as pd
 import os
 import io
+import base64
 import streamlit as st
 from datetime import datetime
 from PIL import Image
@@ -43,20 +44,22 @@ def init_db():
             cnpj TEXT,
             image_path TEXT,
             image_date TEXT,
+            image_b64 TEXT,
             created_at TIMESTAMP
         )
     """)
     
-    # Adicionar colunas se tabela interações já existia sem elas
-    for col_def in [
-        ("proposal_notes", "TEXT"),
-        ("proposal_image_path", "TEXT"),
-        ("proposal_image_date", "TIMESTAMP"),
-        ("callback_date", "TEXT"),
-        ("callback_time", "TEXT")
+    # Adicionar colunas se tabela interações ou proposal_images já existiam sem elas
+    for table_name, col_def in [
+        ("interactions", ("proposal_notes", "TEXT")),
+        ("interactions", ("proposal_image_path", "TEXT")),
+        ("interactions", ("proposal_image_date", "TIMESTAMP")),
+        ("interactions", ("callback_date", "TEXT")),
+        ("interactions", ("callback_time", "TEXT")),
+        ("proposal_images", ("image_b64", "TEXT"))
     ]:
         try:
-            cursor.execute(f"ALTER TABLE interactions ADD COLUMN {col_def[0]} {col_def[1]}")
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_def[0]} {col_def[1]}")
         except sqlite3.OperationalError:
             pass
 
@@ -84,15 +87,12 @@ def load_dataset():
         raise FileNotFoundError(f"Arquivo não encontrado em: {DATA_PATH}")
 
     df = pd.read_excel(DATA_PATH)
-    # Strip spaces from column headers
     df.columns = [str(c).strip() for c in df.columns]
     df["ROW_ID"] = df.index
 
-    # Strip spaces from string cells across all text columns
     for col in df.select_dtypes(include=['object', 'string']).columns:
         df[col] = df[col].astype(str).replace(["nan", "NaN", "None", "<NA>"], "").str.strip()
 
-    # Carregar interações e propostas existentes
     conn = sqlite3.connect(DB_PATH)
     query = """
         SELECT 
@@ -112,10 +112,8 @@ def load_dataset():
     interactions_df = pd.read_sql_query(query, conn)
     conn.close()
 
-    # Mesclar com os dados do Excel
     merged = pd.merge(df, interactions_df, on="ROW_ID", how="left")
     
-    # Preencher NaN em colunas de interação e propostas
     merged["STATUS_CHAMADA"] = merged["STATUS_CHAMADA"].fillna("Pendente")
     merged["ATENDEU"] = merged["ATENDEU"].fillna("Não Registrado")
     merged["INTERACAO_CONSULTOR"] = merged["INTERACAO_CONSULTOR"].fillna("")
@@ -137,10 +135,9 @@ def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
     now_dt = datetime.now()
     now_str = now_dt.strftime("%d/%m/%Y às %H:%M:%S")
 
-    current_img_path = ""
+    current_img_name = ""
     current_img_date = ""
 
-    # Se uma nova imagem foi enviada, comprimir antes de salvar
     if image_bytes is not None and filename:
         compressed_bytes, ext = compress_image_bytes(image_bytes)
         saved_filename = f"proposal_{row_id}_{now_dt.strftime('%Y%m%d_%H%M%S')}{ext}"
@@ -149,16 +146,17 @@ def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
         with open(target_path, "wb") as f:
             f.write(compressed_bytes)
             
-        current_img_path = target_path
+        b64_str = base64.b64encode(compressed_bytes).decode('utf-8')
+        current_img_name = saved_filename
         current_img_date = now_str
 
-        # Inserir no histórico de imagens
+        # Inserir no histórico de imagens (guardando apenas o nome do arquivo + base64 backup)
         cursor.execute("""
-            INSERT INTO proposal_images (row_id, cnpj, image_path, image_date, created_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (int(row_id), str(cnpj), target_path, now_str, now_dt.strftime("%Y-%m-%d %H:%M:%S")))
+            INSERT INTO proposal_images (row_id, cnpj, image_path, image_date, image_b64, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (int(row_id), str(cnpj), saved_filename, now_str, b64_str, now_dt.strftime("%Y-%m-%d %H:%M:%S")))
 
-    # Atualizar notas e última imagem na tabela principal
+    # Atualizar notas e última imagem na tabela principal (guardando apenas o nome do arquivo)
     cursor.execute("""
         INSERT INTO interactions (row_id, cnpj, proposal_notes, proposal_image_path, proposal_image_date, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -167,7 +165,7 @@ def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
             proposal_image_path=CASE WHEN excluded.proposal_image_path != '' THEN excluded.proposal_image_path ELSE interactions.proposal_image_path END,
             proposal_image_date=CASE WHEN excluded.proposal_image_date != '' THEN excluded.proposal_image_date ELSE interactions.proposal_image_date END,
             updated_at=excluded.updated_at
-    """, (int(row_id), str(cnpj), str(notes), current_img_path, current_img_date, now_dt.strftime("%Y-%m-%d %H:%M:%S")))
+    """, (int(row_id), str(cnpj), str(notes), current_img_name, current_img_date, now_dt.strftime("%Y-%m-%d %H:%M:%S")))
 
     conn.commit()
     conn.close()
@@ -175,13 +173,13 @@ def save_proposal(row_id, notes, image_bytes=None, filename=None, cnpj=""):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_proposal_images(row_id):
-    """Retorna todas as imagens da proposta associadas a um cliente (com cache ultrarrápido)."""
+    """Retorna todas as imagens da proposta associadas a um cliente (com restauração automática de backup)."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT image_path, image_date 
+        SELECT image_path, image_date, image_b64 
         FROM proposal_images 
         WHERE row_id=? 
         ORDER BY id DESC
@@ -192,17 +190,35 @@ def get_proposal_images(row_id):
     seen_paths = set()
     
     for r in rows:
-        path, dt = r[0], r[1]
-        if path and os.path.exists(path) and path not in seen_paths:
-            images.append({"path": path, "date": dt})
-            seen_paths.add(path)
+        raw_path, dt, b64_str = r[0], r[1], r[2]
+        if not raw_path:
+            continue
+            
+        img_name = os.path.basename(raw_path)
+        target_path = os.path.join(PROPOSALS_DIR, img_name)
+        
+        # Se a imagem sumiu do disco, restaurar a partir do b64 armazenado no banco SQLite
+        if not os.path.exists(target_path) and b64_str:
+            try:
+                img_data = base64.b64decode(b64_str)
+                with open(target_path, "wb") as f:
+                    f.write(img_data)
+            except Exception:
+                pass
 
-    # Backup/Fallback: Se tabela proposal_images não tem registros, checar tabela principal
+        if os.path.exists(target_path) and target_path not in seen_paths:
+            images.append({"path": target_path, "date": dt})
+            seen_paths.add(target_path)
+
+    # Backup/Fallback: Se tabela proposal_images não tem registros, checar tabela principal interactions
     if not images:
         cursor.execute("SELECT proposal_image_path, proposal_image_date FROM interactions WHERE row_id=?", (int(row_id),))
         row = cursor.fetchone()
-        if row and row[0] and os.path.exists(row[0]):
-            images.append({"path": row[0], "date": row[1] or "Data não registrada"})
+        if row and row[0]:
+            img_name = os.path.basename(row[0])
+            target_path = os.path.join(PROPOSALS_DIR, img_name)
+            if os.path.exists(target_path):
+                images.append({"path": target_path, "date": row[1] or "Data não registrada"})
 
     conn.close()
     return images
@@ -211,17 +227,20 @@ def delete_proposal_image(row_id, image_path):
     """Exclui uma imagem específica do cliente do disco e do banco de dados SQLite."""
     init_db()
     
-    if image_path and os.path.exists(image_path):
+    img_name = os.path.basename(image_path)
+    target_path = os.path.join(PROPOSALS_DIR, img_name)
+    
+    if os.path.exists(target_path):
         try:
-            os.remove(image_path)
+            os.remove(target_path)
         except Exception:
             pass
             
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Deletar da tabela proposal_images
-    cursor.execute("DELETE FROM proposal_images WHERE row_id=? AND image_path=?", (int(row_id), image_path))
+    # Deletar da tabela proposal_images (tanto por nome quanto por caminho completo antigo)
+    cursor.execute("DELETE FROM proposal_images WHERE row_id=? AND (image_path=? OR image_path=?)", (int(row_id), img_name, image_path))
     
     # Buscar imagem restante mais recente
     cursor.execute("SELECT image_path, image_date FROM proposal_images WHERE row_id=? ORDER BY id DESC LIMIT 1", (int(row_id),))
