@@ -61,6 +61,14 @@ st.markdown("""
         border-radius: 6px;
         margin-bottom: 10px;
     }
+    .alert-rejection {
+        background-color: #f8d7da;
+        border-left: 5px solid #dc3545;
+        padding: 10px;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        color: #721c24;
+    }
     .stButton>button {
         border-radius: 6px;
     }
@@ -118,11 +126,18 @@ def save_and_advance_callback(real_row_id, cnpj_val, cliente_nome, current_row_i
     obs_val = st.session_state.get(f"obs_input_{current_row_idx}", "").strip()
     consultor_val = st.session_state.get("consultor", "Consultor")
     
+    # Se status for Rejeitado, concatenar o motivo selecionado
+    if status_choice == "Rejeitado":
+        motivo_rej = st.session_state.get(f"rejection_reason_{current_row_idx}", "Não especificado")
+        status_final = f"Rejeitado ({motivo_rej})"
+    else:
+        status_final = status_choice
+
     db.save_interaction(
         row_id=real_row_id,
         cnpj=cnpj_val,
         cliente=cliente_nome,
-        status=status_choice,
+        status=status_final,
         atendeu=atendeu_choice,
         observacao=obs_val,
         consultor=consultor_val,
@@ -223,7 +238,7 @@ st.sidebar.divider()
 
 # Filtro e Navegação Direta
 st.sidebar.subheader("🔍 Localizar Cliente")
-modo_view = st.sidebar.radio("Filtrar lista por:", ["Todos", "Pendentes", "Atendidos", "Agendados"])
+modo_view = st.sidebar.radio("Filtrar lista por:", ["Todos", "Pendentes", "Atendidos", "Agendados", "Rejeitados"])
 
 if modo_view == "Pendentes":
     lista_indices = df[df["STATUS_CHAMADA"] == "Pendente"].index.tolist()
@@ -231,6 +246,8 @@ elif modo_view == "Atendidos":
     lista_indices = df[df["STATUS_CHAMADA"] != "Pendente"].index.tolist()
 elif modo_view == "Agendados":
     lista_indices = df[df["STATUS_CHAMADA"] == "Agendado"].index.tolist()
+elif modo_view == "Rejeitados":
+    lista_indices = df[df["STATUS_CHAMADA"].astype(str).str.contains("Rejeitado|Sem Interesse", case=False, na=False)].index.tolist()
 else:
     lista_indices = df.index.tolist()
 
@@ -300,6 +317,7 @@ if modo_app == "📊 Dashboard Estatístico da Carteira":
     total_cart = len(df_raw)
     atendidos_cart = (df_raw["STATUS_CHAMADA"] != "Pendente").sum()
     atendeu_sucesso = (df_raw["STATUS_CHAMADA"] == "Atendeu").sum()
+    rejeitados_count = df_raw["STATUS_CHAMADA"].astype(str).str.contains("Rejeitado|Sem Interesse", case=False, na=False).sum()
     prop_com_img = df_raw["PROPOSAL_IMAGE_PATH"].apply(lambda p: bool(p and str(p).strip())).sum()
     
     def check_viabilidade(r):
@@ -317,9 +335,9 @@ if modo_app == "📊 Dashboard Estatístico da Carteira":
     with col_m3:
         st.metric("Chamadas Atendidas", atendeu_sucesso)
     with col_m4:
-        st.metric("Propostas com Imagem", prop_com_img)
+        st.metric("Clientes Rejeitados", rejeitados_count)
     with col_m5:
-        st.metric("Cobertura GPON (%)", f"{int((gpon_count/total_cart)*100)}%" if total_cart else "0%")
+        st.metric("Propostas com Imagem", prop_com_img)
 
     st.divider()
     
@@ -390,6 +408,8 @@ else:
             st.warning(f"Status: **{status_atual}**")
         elif status_atual == "Agendado":
             st.info(f"Status: **Agendado ({saved_cb_date})**")
+        elif "Rejeitado" in status_atual or status_atual == "Sem Interesse":
+            st.error(f"Status: **{status_atual}**")
         else:
             st.success(f"Status: **{status_atual}**")
 
@@ -481,14 +501,17 @@ else:
         pasted_b64 = image_paste_component(key=f"paste_box_{current_row_idx}")
         
         if pasted_b64 and isinstance(pasted_b64, str) and pasted_b64.startswith("data:image"):
-            try:
-                header, b64_data = pasted_b64.split(",", 1)
-                img_bytes = base64.b64decode(b64_data)
-                db.save_proposal(real_row_id, prop_notes_input, img_bytes, "print_colado.png", cnpj=cnpj_val)
-                st.toast("✅ Print colado com sucesso!", icon="📸")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao colar imagem: {e}")
+            paste_hash = hash(pasted_b64)
+            if st.session_state.get(f"last_paste_hash_{current_row_idx}") != paste_hash:
+                try:
+                    header, b64_data = pasted_b64.split(",", 1)
+                    img_bytes = base64.b64decode(b64_data)
+                    db.save_proposal(real_row_id, prop_notes_input, img_bytes, "print_colado.png", cnpj=cnpj_val)
+                    st.session_state[f"last_paste_hash_{current_row_idx}"] = paste_hash
+                    st.session_state[f"img_save_feedback_{current_row_idx}"] = "✅ Print de tela colado e salvo com sucesso!"
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao colar imagem: {e}")
 
         with st.expander("Ou selecione um arquivo do computador"):
             uploaded_file = st.file_uploader(
@@ -497,13 +520,21 @@ else:
                 key=f"prop_img_uploader_{current_row_idx}"
             )
             if uploaded_file is not None:
-                image_bytes = uploaded_file.read()
-                db.save_proposal(real_row_id, prop_notes_input, image_bytes, uploaded_file.name, cnpj=cnpj_val)
-                st.toast("✅ Imagem da proposta enviada!", icon="🎉")
-                st.rerun()
+                file_hash = f"{uploaded_file.name}_{uploaded_file.size}"
+                if st.session_state.get(f"last_upload_hash_{current_row_idx}") != file_hash:
+                    image_bytes = uploaded_file.read()
+                    db.save_proposal(real_row_id, prop_notes_input, image_bytes, uploaded_file.name, cnpj=cnpj_val)
+                    st.session_state[f"last_upload_hash_{current_row_idx}"] = file_hash
+                    st.session_state[f"img_save_feedback_{current_row_idx}"] = "✅ Imagem de proposta enviada e salva com sucesso!"
+                    st.rerun()
 
     with col_prop_right:
         st.markdown("##### 🖼️ Visualização da Proposta (Imagem)")
+        
+        # Exibir mensagem de confirmação direta se acabou de salvar uma nova imagem
+        if st.session_state.get(f"img_save_feedback_{current_row_idx}"):
+            st.success(st.session_state.pop(f"img_save_feedback_{current_row_idx}"))
+
         images_list = db.get_proposal_images(real_row_id)
         
         if images_list:
@@ -557,7 +588,7 @@ else:
             st.rerun()
 
     with col_b2:
-        if st.button(" Não Atendeu", use_container_width=True, type="primary" if st.session_state[f"atendeu_choice_{current_row_idx}"] == "Não" else "secondary"):
+        if st.button(" Não Atendeu", use_container_width=True, type="primary" if st.session_state[f"atendeu_choice_{current_row_idx}"] == "Não" and st.session_state[f"status_choice_{current_row_idx}"] == "Não Atendeu" else "secondary"):
             st.session_state[f"atendeu_choice_{current_row_idx}"] = "Não"
             st.session_state[f"status_choice_{current_row_idx}"] = "Não Atendeu"
             st.rerun()
@@ -569,14 +600,14 @@ else:
             st.rerun()
 
     with col_b4:
-        if st.button("🚫 Sem Interesse / Inviável", use_container_width=True, type="primary" if st.session_state[f"status_choice_{current_row_idx}"] == "Sem Interesse" else "secondary"):
-            st.session_state[f"atendeu_choice_{current_row_idx}"] = "Sim"
-            st.session_state[f"status_choice_{current_row_idx}"] = "Sem Interesse"
+        if st.button("❌ Rejeitar Cliente", use_container_width=True, type="primary" if st.session_state[f"status_choice_{current_row_idx}"] == "Rejeitado" else "secondary"):
+            st.session_state[f"atendeu_choice_{current_row_idx}"] = "Não"
+            st.session_state[f"status_choice_{current_row_idx}"] = "Rejeitado"
             st.rerun()
 
     st.caption(f"Seleção: Chamada **{st.session_state[f'atendeu_choice_{current_row_idx}']}** | Status: **{st.session_state[f'status_choice_{current_row_idx}']}**")
 
-    # DATA E HORA DE AGENDAMENTO DE RETORNO (SE FOR AGENDADO)
+    # OPÇÕES DINÂMICAS DE ACORDO COM O STATUS SELECIONADO
     cb_date_val = ""
     cb_time_val = ""
     if st.session_state[f"status_choice_{current_row_idx}"] == "Agendado":
@@ -591,13 +622,33 @@ else:
             sel_time = st.time_input("Horário do Retorno:", value=default_t, key=f"time_cb_{current_row_idx}")
             cb_time_val = sel_time.strftime("%H:%M")
 
-    # Campo de texto obrigatório
+    elif st.session_state[f"status_choice_{current_row_idx}"] == "Rejeitado":
+        st.markdown("<div class='alert-rejection'>❌ <b>Especificar Motivo Principal da Rejeição / Inviabilidade:</b></div>", unsafe_allow_html=True)
+        rejection_reasons = [
+            "Sem interesse em ofertas de migração",
+            "Inviabilidade técnica / Sem cobertura de rede",
+            "Aparelhos incompatíveis / Preço elevado",
+            "Empresa encerrou atividades / Linhas canceladas",
+            "Fidelizado com outra operadora",
+            "Outro motivo (descrever detalhadamente na justificativa)"
+        ]
+        st.selectbox(
+            "Selecione a categoria de rejeição:",
+            options=rejection_reasons,
+            key=f"rejection_reason_{current_row_idx}"
+        )
+
+    # Campo de texto obrigatório para Observações ou Justificativa de Rejeição
+    is_rejection = st.session_state[f"status_choice_{current_row_idx}"] == "Rejeitado"
+    label_obs = "⚠️ Descreva a justificativa obrigatória da REJEIÇÃO do cliente:" if is_rejection else "Descreva o resultado da ligação / observações obrigatórias:"
+    placeholder_obs = "Ex: Cliente informou que acabou de renovar contrato por 24 meses com a concorrência." if is_rejection else "Ex: Cliente interessado no plano 100GB. Solicitou proposta por WhatsApp para falar com a diretoria."
+
     obs_input = st.text_area(
-        "Descreva o resultado da ligação / observações obrigatórias:",
+        label_obs,
         value=saved_obs,
         height=90,
         key=f"obs_input_{current_row_idx}",
-        placeholder="Ex: Cliente interessado no plano 100GB. Solicitou proposta por WhatsApp para falar com a diretoria na quinta-feira."
+        placeholder=placeholder_obs
     )
 
     obs_valida = bool(obs_input and obs_input.strip())
@@ -615,7 +666,7 @@ else:
 
     with col_nav2:
         if not obs_valida:
-            st.error("⚠️ Preencha a observação para liberar o avanço.")
+            st.error("⚠️ Preencha a observação / justificativa para liberar o avanço.")
             st.button(" Gravar & Avançar para Próximo", disabled=True, use_container_width=True)
         else:
             st.button(
