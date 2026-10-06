@@ -107,6 +107,7 @@ if "consultor" not in st.session_state:
 def change_client_callback(new_index):
     st.session_state.current_index = new_index
     st.session_state.select_client_widget = new_index
+    st.session_state.modo_view_radio = "Todos"
 
 def navigate_client_callback(current_row_idx, lista_indices, direction):
     curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
@@ -238,7 +239,14 @@ st.sidebar.divider()
 
 # Filtro e Navegação Direta
 st.sidebar.subheader("🔍 Localizar Cliente")
-modo_view = st.sidebar.radio("Filtrar lista por:", ["Todos", "Pendentes", "Atendidos", "Agendados", "Rejeitados"])
+if "modo_view_radio" not in st.session_state:
+    st.session_state.modo_view_radio = "Todos"
+
+modo_view = st.sidebar.radio(
+    "Filtrar lista por:",
+    ["Todos", "Pendentes", "Atendidos", "Agendados", "Rejeitados"],
+    key="modo_view_radio"
+)
 
 if modo_view == "Pendentes":
     lista_indices = df[df["STATUS_CHAMADA"] == "Pendente"].index.tolist()
