@@ -95,10 +95,57 @@ if "current_index" not in st.session_state:
 if "consultor" not in st.session_state:
     st.session_state.consultor = "Consultor"
 
-# Função central para alterar cliente garantindo sincronia total dos widgets da sidebar
-def set_current_client(index):
-    st.session_state.current_index = index
-    st.session_state.select_client_widget = index
+# === CALLBACKS SEGUROS PARA MUDANÇA DE ESTADO SEM ERROS STREAMLIT ===
+def change_client_callback(new_index):
+    st.session_state.current_index = new_index
+    st.session_state.select_client_widget = new_index
+
+def navigate_client_callback(current_row_idx, lista_indices, direction):
+    curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
+    if direction == "prev" and curr_pos > 0:
+        target_idx = lista_indices[curr_pos - 1]
+    elif direction == "next" and curr_pos < len(lista_indices) - 1:
+        target_idx = lista_indices[curr_pos + 1]
+    else:
+        target_idx = current_row_idx
+        
+    st.session_state.current_index = target_idx
+    st.session_state.select_client_widget = target_idx
+
+def save_and_advance_callback(real_row_id, cnpj_val, cliente_nome, current_row_idx, lista_indices, cb_date_val, cb_time_val):
+    status_choice = st.session_state.get(f"status_choice_{current_row_idx}", "Atendeu")
+    atendeu_choice = st.session_state.get(f"atendeu_choice_{current_row_idx}", "Sim")
+    obs_val = st.session_state.get(f"obs_input_{current_row_idx}", "").strip()
+    consultor_val = st.session_state.get("consultor", "Consultor")
+    
+    db.save_interaction(
+        row_id=real_row_id,
+        cnpj=cnpj_val,
+        cliente=cliente_nome,
+        status=status_choice,
+        atendeu=atendeu_choice,
+        observacao=obs_val,
+        consultor=consultor_val,
+        callback_date=cb_date_val,
+        callback_time=cb_time_val
+    )
+    
+    st.session_state["show_saved_toast"] = True
+    
+    curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
+    if curr_pos < len(lista_indices) - 1:
+        next_idx = lista_indices[curr_pos + 1]
+        st.session_state.current_index = next_idx
+        st.session_state.select_client_widget = next_idx
+
+def import_sheet_callback():
+    uploaded_file = st.session_state.get("new_dataset_uploader")
+    if uploaded_file is not None:
+        file_bytes = uploaded_file.read()
+        num_rows = db.import_new_dataset(file_bytes, uploaded_file.name)
+        st.session_state.current_index = 0
+        st.session_state.select_client_widget = 0
+        st.session_state["import_success_msg"] = f"✅ Planilha carregada! {num_rows} clientes importados."
 
 # Callback do seletor da sidebar
 def on_selectbox_change():
@@ -163,9 +210,12 @@ for idx, r in df_agendados.iterrows():
 if agendados_hoje:
     st.sidebar.warning(f"⚠️ **{len(agendados_hoje)} retornos pendentes para hoje!**")
     for row_i, c_nome, c_d, c_t in agendados_hoje:
-        if st.sidebar.button(f"📞 #{row_i+1} - {c_nome[:18]}... ({c_t})", key=f"btn_cb_{row_i}"):
-            set_current_client(row_i)
-            st.rerun()
+        st.sidebar.button(
+            f"📞 #{row_i+1} - {c_nome[:18]}... ({c_t})",
+            key=f"btn_cb_{row_i}",
+            on_click=change_client_callback,
+            args=(row_i,)
+        )
 else:
     st.sidebar.success(" Nenhuma ligação agendada pendente para hoje.")
 
@@ -216,12 +266,10 @@ uploaded_sheet = st.sidebar.file_uploader(
     key="new_dataset_uploader"
 )
 if uploaded_sheet is not None:
-    if st.sidebar.button("🔄 Atualizar Base de Dados", type="primary", use_container_width=True):
-        file_bytes = uploaded_sheet.read()
-        num_rows = db.import_new_dataset(file_bytes, uploaded_sheet.name)
-        st.sidebar.success(f"✅ Planilha carregada! {num_rows} clientes importados.")
-        set_current_client(0)
-        st.rerun()
+    st.sidebar.button("🔄 Atualizar Base de Dados", type="primary", use_container_width=True, on_click=import_sheet_callback)
+
+if st.session_state.get("import_success_msg"):
+    st.sidebar.success(st.session_state.pop("import_success_msg"))
 
 st.sidebar.divider()
 
@@ -253,6 +301,7 @@ if modo_app == "📊 Dashboard Estatístico da Carteira":
     atendidos_cart = (df_raw["STATUS_CHAMADA"] != "Pendente").sum()
     atendeu_sucesso = (df_raw["STATUS_CHAMADA"] == "Atendeu").sum()
     prop_com_img = df_raw["PROPOSAL_IMAGE_PATH"].apply(lambda p: bool(p and str(p).strip())).sum()
+    
     def check_viabilidade(r):
         t_rede = str(r.get("TIPO_REDE", "")).strip().upper()
         t_cob = str(r.get("TEM_COBERTURA_BANDA_LARGA", "")).strip().upper()
@@ -292,6 +341,10 @@ if modo_app == "📊 Dashboard Estatístico da Carteira":
                 st.info("Nenhum atendimento realizado ainda.")
 
 else:
+    # Feedback visual pós-salvamento
+    if st.session_state.pop("show_saved_toast", False):
+        st.toast("✅ Atendimento registrado com sucesso!", icon="🎉")
+
     # === MODO ATENDIMENTO INDIVIDUAL ===
     current_row_idx = st.session_state.current_index
     row_dict = df_raw.iloc[current_row_idx].to_dict()
@@ -552,39 +605,32 @@ else:
     col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
 
     with col_nav1:
-        if st.button("◀ Cliente Anterior", disabled=(current_row_idx == 0), use_container_width=True):
-            curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
-            if curr_pos > 0:
-                set_current_client(lista_indices[curr_pos - 1])
-                st.rerun()
+        st.button(
+            "◀ Cliente Anterior",
+            disabled=(current_row_idx == 0),
+            use_container_width=True,
+            on_click=navigate_client_callback,
+            args=(current_row_idx, lista_indices, "prev")
+        )
 
     with col_nav2:
         if not obs_valida:
             st.error("⚠️ Preencha a observação para liberar o avanço.")
             st.button(" Gravar & Avançar para Próximo", disabled=True, use_container_width=True)
         else:
-            if st.button(" Gravar & Avançar para Próximo Cliente", type="primary", use_container_width=True):
-                db.save_interaction(
-                    row_id=real_row_id,
-                    cnpj=cnpj_val,
-                    cliente=cliente_nome,
-                    status=st.session_state[f"status_choice_{current_row_idx}"],
-                    atendeu=st.session_state[f"atendeu_choice_{current_row_idx}"],
-                    observacao=obs_input.strip(),
-                    consultor=st.session_state.consultor,
-                    callback_date=cb_date_val,
-                    callback_time=cb_time_val
-                )
-                st.toast("✅ Atendimento registrado com sucesso!", icon="🎉")
-                
-                curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
-                if curr_pos < len(lista_indices) - 1:
-                    set_current_client(lista_indices[curr_pos + 1])
-                st.rerun()
+            st.button(
+                " Gravar & Avançar para Próximo Cliente",
+                type="primary",
+                use_container_width=True,
+                on_click=save_and_advance_callback,
+                args=(real_row_id, cnpj_val, cliente_nome, current_row_idx, lista_indices, cb_date_val, cb_time_val)
+            )
 
     with col_nav3:
-        if st.button("Próximo Sem Salvar ▶", disabled=(current_row_idx == lista_indices[-1]), use_container_width=True):
-            curr_pos = lista_indices.index(current_row_idx) if current_row_idx in lista_indices else 0
-            if curr_pos < len(lista_indices) - 1:
-                set_current_client(lista_indices[curr_pos + 1])
-                st.rerun()
+        st.button(
+            "Próximo Sem Salvar ▶",
+            disabled=(current_row_idx == lista_indices[-1]),
+            use_container_width=True,
+            on_click=navigate_client_callback,
+            args=(current_row_idx, lista_indices, "next")
+        )
